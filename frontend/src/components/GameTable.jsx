@@ -1,16 +1,16 @@
-// src/components/GameTable.jsx
-import React, { useState, useEffect } from 'react';
+// frontend/src/components/GameTable.jsx
+import React from 'react';
 
 export default function GameTable({
   gameState,
   playerId,
-  playerName,
-  chooseDealerPlayer,
-  chooseHukum,
-  playCard
+  playerName, // If needed
+  chooseDealerPlayer, // Prop function from App.jsx
+  chooseHukum,        // Prop function from App.jsx
+  playCard,           // Prop function from App.jsx
+  chooseTeam,         // <-- Add this prop
+  startGame           // <-- Add this prop
 }) {
-  const [selectedCard, setSelectedCard] = useState(null);
-
   if (!gameState) {
     return <div className="game-table"><h2>Loading game...</h2></div>;
   }
@@ -27,8 +27,7 @@ export default function GameTable({
 
   const handleCardClick = (card) => {
     if (!isMyTurn || !isPlaying) return;
-    playCard(card);
-    setSelectedCard(null);
+    playCard(card); // Use the prop function
   };
 
   const isValidPlay = (card) => {
@@ -47,6 +46,8 @@ export default function GameTable({
   // --- Team Selection View ---
   if (isTeamSelection) {
     const isRoomFull = gameState.players.length >= 4;
+    // Find the player object for the current user to check if they are the creator
+    const currentPlayer = gameState.players.find(p => p.id === playerId);
     const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
     const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
 
@@ -68,8 +69,11 @@ export default function GameTable({
                 const p = gameState.players.find(pl => pl.id === id);
                 return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
               })}
+              {/* Use the `chooseTeam` prop function, not `socket` */}
               {gameState.teams?.A?.length < 2 && (
-                <button onClick={() => socket.emit('chooseTeam', { roomCode: gameState.roomCode, team: 'A' })}>Join Team A</button>
+                <button onClick={() => chooseTeam('A')}> {/* Corrected */}
+                  Join Team A
+                </button>
               )}
             </ul>
           </div>
@@ -80,15 +84,19 @@ export default function GameTable({
                 const p = gameState.players.find(pl => pl.id === id);
                 return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
               })}
+              {/* Use the `chooseTeam` prop function, not `socket` */}
               {gameState.teams?.B?.length < 2 && (
-                <button onClick={() => socket.emit('chooseTeam', { roomCode: gameState.roomCode, team: 'B' })}>Join Team B</button>
+                <button onClick={() => chooseTeam('B')}> {/* Corrected */}
+                  Join Team B
+                </button>
               )}
             </ul>
           </div>
         </div>
 
+        {/* Use the `startGame` prop function, not `socket` */}
         {isCreator && canStart && (
-          <button className="start-button" onClick={() => socket.emit('startGame', { roomCode: gameState.roomCode })}>
+          <button className="start-button" onClick={startGame}> {/* Corrected */}
             Start Game
           </button>
         )}
@@ -117,6 +125,7 @@ export default function GameTable({
           {gameState.players
             .filter(p => p.team === playerTeam)
             .map(p => (
+              // Use the prop function `socket` is not defined here
               <button key={p.id} onClick={() => chooseDealerPlayer(p.id)}>
                 {p.name}
               </button>
@@ -140,6 +149,7 @@ export default function GameTable({
           <h3>Choose the Hukum (Trump) Suit:</h3>
           <div className="suit-buttons">
             {['Clubs', 'Diamonds', 'Spades', 'Hearts'].map(suit => (
+              // Use the prop function `socket` is not defined here
               <button key={suit} onClick={() => chooseHukum(suit)}>
                 {suit}
               </button>

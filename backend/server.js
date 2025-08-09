@@ -164,27 +164,29 @@ io.on('connection', (socket) => {
 
   // Choose Team
   socket.on('chooseTeam', ({ roomCode, team }) => {
-  const room = rooms[roomCode];
-  if (!room || room.state !== 'teamSelection') return;
+    const room = rooms[roomCode];
+    if (!room || room.state !== 'teamSelection') return;
 
-  const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
-  const player = room.players.find(p => p.id === playerId);
-  if (!player) return;
+    const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
+    if (!playerId) return;
 
-  // Remove from old team if any
-  if (player.team) {
-    const oldTeamIndex = room.teams[player.team].indexOf(playerId);
-    if (oldTeamIndex > -1) room.teams[player.team].splice(oldTeamIndex, 1);
-  }
+    const player = room.players.find(p => p.id === playerId);
+    if (!player) return;
 
-  // Add to new team if space
-  if (room.teams[team].length < 2) {
-    room.teams[team].push(playerId);
-    player.team = team;
-    io.to(roomCode).emit('teamsUpdated', room.teams); // Update teams for all
-  }
-});
+    // Remove from old team if any
+    if (player.team) {
+        const oldTeamIndex = room.teams[player.team].indexOf(playerId);
+        if (oldTeamIndex > -1) room.teams[player.team].splice(oldTeamIndex, 1);
+    }
 
+    // Add to new team if space
+    if (room.teams[team].length < 2) {
+        room.teams[team].push(playerId);
+        player.team = team;
+        io.to(roomCode).emit('teamsUpdated', room.teams); // Update teams for all
+        io.to(roomCode).emit('gameState', getPublicGameState(room)); // Update full state
+    }
+  });
 
   // Start Game
   socket.on('startGame', ({ roomCode }) => {
