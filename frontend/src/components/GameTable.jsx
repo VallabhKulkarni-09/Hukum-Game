@@ -4,12 +4,12 @@ import React from 'react';
 export default function GameTable({
   gameState,
   playerId,
-  playerName, // If needed
+  playerName,
   chooseDealerPlayer, // Prop function from App.jsx
   chooseHukum,        // Prop function from App.jsx
   playCard,           // Prop function from App.jsx
-  chooseTeam,         // <-- Add this prop
-  startGame           // <-- Add this prop
+  chooseTeam,         // <-- Add this prop (from App.jsx)
+  startGame           // <-- Add this prop (from App.jsx)
 }) {
   if (!gameState) {
     return <div className="game-table"><h2>Loading game...</h2></div>;
@@ -217,7 +217,8 @@ export default function GameTable({
                 onClick={() => handleCardClick(card)}
                 disabled={!isMyTurn || !isValidPlay(card)}
               >
-                {card.value} of {card.suit}
+                <span className="card-value">{card.value}</span>
+                <span className="card-suit">of {card.suit}</span>
               </button>
             ))}
           </div>
