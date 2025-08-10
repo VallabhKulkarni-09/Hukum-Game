@@ -1274,6 +1274,7 @@ body {
     transform: rotate(90deg);
   }
   
+  
   .game-info-bar {
     flex-direction: column;
     gap: 15px;
