@@ -1,23 +1,34 @@
 // frontend/src/components/GameTable.jsx
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function GameTable({
   gameState,
   playerId,
   playerName,
-  chooseDealerPlayer, // Prop function from App.jsx
-  chooseHukum,        // Prop function from App.jsx
-  playCard,           // Prop function from App.jsx
-  chooseTeam,         // <-- Add this prop (from App.jsx)
-  startGame           // <-- Add this prop (from App.jsx)
+  chooseDealerPlayer,
+  chooseHukum,
+  playCard,
+  chooseTeam,
+  startGame
 }) {
+  // Local state to manage hand display if needed for incremental updates
+  // const [displayedHand, setDisplayedHand] = useState([]);
+
   if (!gameState) {
     return <div className="game-table"><h2>Loading game...</h2></div>;
   }
 
+  // Use gameState.playerHand which is sent specifically to this player by the backend
+  const playerHand = gameState.playerHand || [];
+  const sortedHand = [...playerHand].sort((a, b) => {
+    const suitOrder = { Clubs: 0, Diamonds: 1, Spades: 2, Hearts: 3 };
+    if (a.suit !== b.suit) return suitOrder[a.suit] - suitOrder[b.suit];
+    const valueOrder = ['7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace'];
+    return valueOrder.indexOf(a.value) - valueOrder.indexOf(b.value);
+  });
+
   const player = gameState.players?.find(p => p.id === playerId);
   const playerTeam = player?.team;
-  const playerHand = gameState.playerHand || []; // Assuming backend sends this
   const isMyTurn = gameState.currentTurn === playerId;
   const isTeamSelection = gameState.state === 'teamSelection';
   const isChoosingDealer = gameState.state === 'choosingDealer';
@@ -25,29 +36,32 @@ export default function GameTable({
   const isPlaying = gameState.state === 'playing';
   const isGameOver = gameState.state === 'gameOver';
 
-  const handleCardClick = (card) => {
-    if (!isMyTurn || !isPlaying) return;
-    playCard(card); // Use the prop function
-  };
-
+  // --- CORRECTED Frontend Validation Logic ---
   const isValidPlay = (card) => {
     if (!isMyTurn || !isPlaying || !gameState.trick) return false;
-    if (gameState.trick.length === 0) return true;
+    if (gameState.trick.length === 0) return true; // First card, always valid
 
     const leadSuit = gameState.trick[0].card.suit;
     const hasLead = playerHand.some(c => c.suit === leadSuit);
-    const hasTrump = playerHand.some(c => c.suit === gameState.hukum);
 
-    if (hasLead && card.suit !== leadSuit) return false;
-    if (!hasLead && card.suit !== gameState.hukum && hasTrump) return false;
+    // If player has the lead suit, they must play it
+    if (hasLead) {
+        return card.suit === leadSuit;
+    }
+
+    // If player doesn't have the lead suit, any card is valid
     return true;
   };
+
+  const handleCardClick = (card) => {
+    if (!isMyTurn || !isPlaying) return;
+    playCard(card);
+  };
+
 
   // --- Team Selection View ---
   if (isTeamSelection) {
     const isRoomFull = gameState.players.length >= 4;
-    // Find the player object for the current user to check if they are the creator
-    const currentPlayer = gameState.players.find(p => p.id === playerId);
     const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
     const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
 
@@ -69,9 +83,8 @@ export default function GameTable({
                 const p = gameState.players.find(pl => pl.id === id);
                 return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
               })}
-              {/* Use the `chooseTeam` prop function, not `socket` */}
               {gameState.teams?.A?.length < 2 && (
-                <button onClick={() => chooseTeam('A')}> {/* Corrected */}
+                <button onClick={() => chooseTeam('A')}>
                   Join Team A
                 </button>
               )}
@@ -84,9 +97,8 @@ export default function GameTable({
                 const p = gameState.players.find(pl => pl.id === id);
                 return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
               })}
-              {/* Use the `chooseTeam` prop function, not `socket` */}
               {gameState.teams?.B?.length < 2 && (
-                <button onClick={() => chooseTeam('B')}> {/* Corrected */}
+                <button onClick={() => chooseTeam('B')}>
                   Join Team B
                 </button>
               )}
@@ -94,9 +106,8 @@ export default function GameTable({
           </div>
         </div>
 
-        {/* Use the `startGame` prop function, not `socket` */}
         {isCreator && canStart && (
-          <button className="start-button" onClick={startGame}> {/* Corrected */}
+          <button className="start-button" onClick={startGame}>
             Start Game
           </button>
         )}
@@ -125,7 +136,6 @@ export default function GameTable({
           {gameState.players
             .filter(p => p.team === playerTeam)
             .map(p => (
-              // Use the prop function `socket` is not defined here
               <button key={p.id} onClick={() => chooseDealerPlayer(p.id)}>
                 {p.name}
               </button>
@@ -147,13 +157,25 @@ export default function GameTable({
           <h1>🃏 Hukum</h1>
           <h2>Room Code: {gameState.roomCode}</h2>
           <h3>Choose the Hukum (Trump) Suit:</h3>
+          <p>You can see your first 4 cards.</p>
           <div className="suit-buttons">
             {['Clubs', 'Diamonds', 'Spades', 'Hearts'].map(suit => (
-              // Use the prop function `socket` is not defined here
               <button key={suit} onClick={() => chooseHukum(suit)}>
                 {suit}
               </button>
             ))}
+          </div>
+          {/* Optionally display the first 4 cards here for the chooser */}
+          <div className="hand">
+            <h4>Your First 4 Cards:</h4>
+            <div className="hand-cards">
+              {sortedHand.map((card, index) => (
+                <div key={`${card.suit}-${card.value}-${index}`} className="card">
+                  <span className="card-value">{card.value}</span>
+                  <span className="card-suit">of {card.suit}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       );
@@ -163,6 +185,19 @@ export default function GameTable({
                 <h1>🃏 Hukum</h1>
                 <h2>Room Code: {gameState.roomCode}</h2>
                 <p>Waiting for {gameState.players.find(p => p.id === expectedChooserId)?.name} to choose Hukum...</p>
+                <p>You can see your first 4 cards.</p>
+                 {/* Optionally display the first 4 cards here for others */}
+                 <div className="hand">
+                    <h4>Your First 4 Cards:</h4>
+                    <div className="hand-cards">
+                    {sortedHand.map((card, index) => (
+                        <div key={`${card.suit}-${card.value}-${index}`} className="card">
+                        <span className="card-value">{card.value}</span>
+                        <span className="card-suit">of {card.suit}</span>
+                        </div>
+                    ))}
+                    </div>
+                </div>
             </div>
         );
     }
@@ -210,9 +245,9 @@ export default function GameTable({
         <div className="hand">
           <h3>Your Hand</h3>
           <div className="hand-cards">
-            {playerHand.map((card, index) => (
+            {sortedHand.map((card, index) => (
               <button
-                key={`${card.suit}-${card.value}-${index}`} // Better key
+                key={`${card.suit}-${card.value}-${index}`}
                 className={`card ${(!isMyTurn || !isValidPlay(card)) ? 'invalid' : ''}`}
                 onClick={() => handleCardClick(card)}
                 disabled={!isMyTurn || !isValidPlay(card)}
