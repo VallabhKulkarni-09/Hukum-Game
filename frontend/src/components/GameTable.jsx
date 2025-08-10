@@ -4,12 +4,20 @@ export default function GameTable({
   gameState,
   playerId,
   playerName,
+<<<<<<< HEAD
+  chooseDealerPlayer, // Prop function from App.jsx
+  chooseHukum,        // Prop function from App.jsx
+  playCard,           // Prop function from App.jsx
+  chooseTeam,         // <-- Add this prop (from App.jsx)
+  startGame           // <-- Add this prop (from App.jsx)
+=======
   playerHand,
   chooseTeam,
   startGame,
   chooseDealerPlayer,
   chooseHukum,
   playCard
+>>>>>>> bd65a40 (new game logic)
 }) {
   const [trickVisible, setTrickVisible] = useState(true);
 
@@ -337,9 +345,27 @@ export default function GameTable({
           </div>
         </div>
 
+<<<<<<< HEAD
+        {/* Player's Hand */}
+        <div className="hand">
+          <h3>Your Hand</h3>
+          <div className="hand-cards">
+            {playerHand.map((card, index) => (
+              <button
+                key={`${card.suit}-${card.value}-${index}`} // Better key
+                className={`card ${(!isMyTurn || !isValidPlay(card)) ? 'invalid' : ''}`}
+                onClick={() => handleCardClick(card)}
+                disabled={!isMyTurn || !isValidPlay(card)}
+              >
+                <span className="card-value">{card.value}</span>
+                <span className="card-suit">of {card.suit}</span>
+              </button>
+            ))}
+=======
         {gameState.trick?.length === 0 && isMyTurn && (
           <div className="play-hint">
             <p>💡 You're leading this trick - play any card!</p>
+>>>>>>> bd65a40 (new game logic)
           </div>
         )}
       </div>

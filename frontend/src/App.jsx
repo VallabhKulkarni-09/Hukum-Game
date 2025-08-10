@@ -15,6 +15,7 @@ function App() {
   const [playerHand, setPlayerHand] = useState([]);
   const socketRef = useRef(socket);
 
+  
   useEffect(() => {
     const handleRoomCreated = ({ roomCode }) => {
       setRoomCode(roomCode);
@@ -37,12 +38,12 @@ function App() {
       setPlayerHand(hand);
     };
 
-    const handleCardPlayed = ({ playerId, card, playerName }) => {
-      console.log(`${playerName} played ${card.value} of ${card.suit}`);
-    };
-
     const handleHandUpdated = ({ hand }) => {
       setPlayerHand(hand);
+    };
+
+    const handleCardPlayed = ({ playerId, card, playerName }) => {
+      console.log(`${playerName} played ${card.value} of ${card.suit}`);
     };
 
     const handleTrickComplete = ({ winnerName, winnerTeam, tricksWon }) => {
@@ -50,7 +51,7 @@ function App() {
     };
 
     const handleTrickCleared = () => {
-      // No state update needed; GameTable handles visibility
+      // Optional: Additional handling if needed
     };
 
     const handleHukumChosen = ({ hukum, chooser }) => {
@@ -65,8 +66,8 @@ function App() {
     socketRef.current.on('roomJoined', handleRoomJoined);
     socketRef.current.on('gameState', handleGameState);
     socketRef.current.on('dealCards', handleDealCards);
-    socketRef.current.on('cardPlayed', handleCardPlayed);
     socketRef.current.on('handUpdated', handleHandUpdated);
+    socketRef.current.on('cardPlayed', handleCardPlayed);
     socketRef.current.on('trickComplete', handleTrickComplete);
     socketRef.current.on('trickCleared', handleTrickCleared);
     socketRef.current.on('hukumChosen', handleHukumChosen);
@@ -77,8 +78,8 @@ function App() {
       socketRef.current.off('roomJoined', handleRoomJoined);
       socketRef.current.off('gameState', handleGameState);
       socketRef.current.off('dealCards', handleDealCards);
-      socketRef.current.off('cardPlayed', handleCardPlayed);
       socketRef.current.off('handUpdated', handleHandUpdated);
+      socketRef.current.off('cardPlayed', handleCardPlayed);
       socketRef.current.off('trickComplete', handleTrickComplete);
       socketRef.current.off('trickCleared', handleTrickCleared);
       socketRef.current.off('hukumChosen', handleHukumChosen);
