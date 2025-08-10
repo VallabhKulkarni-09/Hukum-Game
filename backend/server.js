@@ -6,7 +6,6 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
@@ -43,34 +42,53 @@ function rankValue(value) {
 }
 
 function getTrickWinner(cards, hukum, startingSuit) {
-  let maxSuitIndex = -1;
-  let maxTrumpIndex = -1;
-  let maxOtherIndex = -1;
-
+  let winnerIndex = 0;
+  
+  // First, check if any trump cards were played
+  const trumpCardsPlayed = [];
+  const leadingSuitCardsPlayed = [];
+  
   for (let i = 0; i < cards.length; i++) {
-    const card = cards[i];
-    if (card.suit === startingSuit) {
-      if (maxSuitIndex === -1 || rankValue(card.value) > rankValue(cards[maxSuitIndex].value)) {
-        maxSuitIndex = i;
-      }
-    } else if (card.suit === hukum) {
-      if (maxTrumpIndex === -1 || rankValue(card.value) > rankValue(cards[maxTrumpIndex].value)) {
-        maxTrumpIndex = i;
-      }
-    } else {
-      if (maxOtherIndex === -1 || rankValue(card.value) > rankValue(cards[maxOtherIndex].value)) {
-        maxOtherIndex = i;
-      }
+    if (cards[i].suit === hukum && cards[i].suit !== startingSuit) {
+      // Trump card (but not if trump IS the leading suit)
+      trumpCardsPlayed.push({ index: i, card: cards[i] });
+    } else if (cards[i].suit === startingSuit) {
+      // Leading suit card
+      leadingSuitCardsPlayed.push({ index: i, card: cards[i] });
     }
   }
-
-  if (maxSuitIndex !== -1) {
-    return maxSuitIndex;
-  } else if (maxTrumpIndex !== -1) {
-    return maxTrumpIndex;
-  } else {
-    return maxOtherIndex;
+  
+  // If trump cards were played AND trump is not the leading suit, highest trump wins
+  if (trumpCardsPlayed.length > 0 && hukum !== startingSuit) {
+    let highestTrumpRank = -1;
+    let highestTrumpIndex = 0;
+    
+    for (const trumpPlay of trumpCardsPlayed) {
+      const rank = rankValue(trumpPlay.card.value);
+      if (rank > highestTrumpRank) {
+        highestTrumpRank = rank;
+        highestTrumpIndex = trumpPlay.index;
+      }
+    }
+    
+    return highestTrumpIndex;
   }
+  
+  // Otherwise, highest card of the leading suit wins
+  let highestLeadingRank = -1;
+  let highestLeadingIndex = 0;
+  
+  for (const leadPlay of leadingSuitCardsPlayed) {
+    const rank = rankValue(leadPlay.card.value);
+    if (rank > highestLeadingRank) {
+      highestLeadingRank = rank;
+      highestLeadingIndex = leadPlay.index;
+    }
+  }
+  
+  // If no leading suit cards were played (shouldn't happen in valid game), 
+  // return the first card as winner
+  return leadingSuitCardsPlayed.length > 0 ? highestLeadingIndex : 0;
 }
 
 function generateRoomCode() {
@@ -85,11 +103,14 @@ function getPublicGameState(room) {
 
 function isValidPlay(hand, card, trick, hukum) {
   if (trick.length === 0) return true;
+
   const leadingSuit = trick[0].card.suit;
   const hasLeadingSuit = hand.some(c => c.suit === leadingSuit);
+
   if (hasLeadingSuit && card.suit !== leadingSuit) {
     return false;
   }
+
   return true;
 }
 
@@ -102,7 +123,7 @@ io.on('connection', (socket) => {
       roomCode = generateRoomCode();
     } while (rooms[roomCode]);
 
-  rooms[roomCode] = {
+    rooms[roomCode] = {
       roomCode,
       players: [],
       playerSockets: {},
@@ -126,7 +147,6 @@ io.on('connection', (socket) => {
     const newPlayer = { id: playerId, name: playerName, team: null };
     rooms[roomCode].players.push(newPlayer);
     rooms[roomCode].playerSockets[playerId] = socket.id;
-
     socket.join(roomCode);
     socket.emit('roomCreated', { roomCode, player: newPlayer });
     io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode]));
@@ -134,14 +154,17 @@ io.on('connection', (socket) => {
 
   socket.on('joinRoom', ({ roomCode, playerName, playerId }) => {
     const room = rooms[roomCode?.toUpperCase()];
+
     if (!room) {
       socket.emit('error', 'Room not found.');
       return;
     }
+
     if (room.players.length >= 4) {
       socket.emit('error', 'Room is full.');
       return;
     }
+
     if (room.players.some(p => p.id === playerId)) {
       socket.emit('error', 'Player ID already taken.');
       return;
@@ -150,7 +173,6 @@ io.on('connection', (socket) => {
     const newPlayer = { id: playerId, name: playerName, team: null };
     room.players.push(newPlayer);
     room.playerSockets[playerId] = socket.id;
-
     socket.join(roomCode);
     socket.emit('roomJoined', { roomCode: room.roomCode });
     io.to(roomCode).emit('playerJoined', newPlayer);
@@ -183,10 +205,12 @@ io.on('connection', (socket) => {
   socket.on('startGame', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'teamSelection') return;
+
     if (room.players.length !== 4) {
       socket.emit('error', 'Need 4 players to start.');
       return;
     }
+
     if (room.teams.A.length !== 2 || room.teams.B.length !== 2) {
       socket.emit('error', 'Teams must be full (2 players each).');
       return;
@@ -229,10 +253,12 @@ io.on('connection', (socket) => {
     const hukumChooserTeam = room.dealerTeam === 'A' ? 'B' : 'A';
     const hukumChooserIndex = Math.floor(Math.random() * 2);
     room.hukumChooser = room.teams[hukumChooserTeam][hukumChooserIndex];
+
     const hukumChooserSocketId = room.playerSockets[room.hukumChooser];
     if (hukumChooserSocketId) {
       io.to(hukumChooserSocketId).emit('promptChooseHukum', { hand: room.hands[room.hukumChooser] });
     }
+
     io.to(roomCode).emit('gameState', getPublicGameState(room));
   });
 
@@ -248,6 +274,7 @@ io.on('connection', (socket) => {
 
     const chooserHand = room.hands[playerId];
     const validSuits = [...new Set(chooserHand.map(card => card.suit))];
+
     if (!validSuits.includes(suit)) {
       socket.emit('error', 'You must choose Hukum from your 8 cards.');
       return;
@@ -271,9 +298,11 @@ io.on('connection', (socket) => {
     room.round = 0;
     room.tricksWon = { A: 0, B: 0 };
     room.trick = [];
+
     const firstPlayerTeam = room.dealerTeam;
     room.currentTurn = room.teams[firstPlayerTeam][0];
     room.trickStarter = room.currentTurn;
+
     io.to(roomCode).emit('gameState', getPublicGameState(room));
     io.to(roomCode).emit('hukumChosen', { hukum: suit, chooser: room.players.find(p => p.id === room.hukumChooser).name });
   });
@@ -290,6 +319,7 @@ io.on('connection', (socket) => {
 
     const hand = room.hands[playerId];
     const cardIndex = hand.findIndex(c => c.suit === card.suit && c.value === card.value);
+
     if (cardIndex === -1) {
       socket.emit('error', 'Card not in your hand.');
       return;
@@ -309,7 +339,9 @@ io.on('connection', (socket) => {
 
     hand.splice(cardIndex, 1);
     room.trick.push({ playerId, card });
+
     io.to(roomCode).emit('cardPlayed', { playerId, card, playerName: room.players.find(p => p.id === playerId).name });
+
     const playerSocketId = room.playerSockets[playerId];
     if (playerSocketId) {
       io.to(playerSocketId).emit('handUpdated', { hand });
@@ -327,6 +359,7 @@ io.on('connection', (socket) => {
       const winnerTeam = winnerPlayer.team;
 
       room.tricksWon[winnerTeam] += 1;
+
       room.gameHistory.push({
         round: room.round + 1,
         trick: [...room.trick],
@@ -352,6 +385,7 @@ io.on('connection', (socket) => {
         const dealerTeamTricks = room.tricksWon[room.dealerTeam];
         const otherTeam = room.dealerTeam === 'A' ? 'B' : 'A';
         const otherTeamTricks = room.tricksWon[otherTeam];
+
         let gameEnded = false;
 
         if (dealerTeamTricks >= 5) {
@@ -370,6 +404,7 @@ io.on('connection', (socket) => {
 
         io.to(roomCode).emit('trickCleared');
         io.to(roomCode).emit('gameState', getPublicGameState(room));
+
         if (gameEnded) {
           io.to(roomCode).emit('gameOver', {
             winner: room.winner,
@@ -377,7 +412,9 @@ io.on('connection', (socket) => {
             gameHistory: room.gameHistory
           });
         }
+
       }, 2500);
+
     } else {
       io.to(roomCode).emit('gameState', getPublicGameState(room));
     }
@@ -395,23 +432,29 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
+
     for (let roomCode in rooms) {
       const room = rooms[roomCode];
       const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
+
       if (playerId) {
         const playerIndex = room.players.findIndex(p => p.id === playerId);
         if (playerIndex > -1) {
           const player = room.players.splice(playerIndex, 1)[0];
           delete room.playerSockets[playerId];
+
           if (player.team && room.teams[player.team]) {
             const teamIndex = room.teams[player.team].indexOf(playerId);
             if (teamIndex > -1) room.teams[player.team].splice(teamIndex, 1);
           }
+
           io.to(roomCode).emit('playerLeft', { id: playerId, name: player.name });
           io.to(roomCode).emit('gameState', getPublicGameState(room));
+
           if (room.state === 'teamSelection') {
             io.to(roomCode).emit('teamsUpdated', room.teams);
           }
+
           break;
         }
       }
