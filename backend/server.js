@@ -96,7 +96,7 @@ function isValidPlay(hand, card, trick, hukum) {
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  socket.on('createRoom', ({ playerName, playerId }) => {
+  socket.on('createRoom', ({ playerName, playerId, isPrivate = false }) => {
     let roomCode;
     do {
       roomCode = generateRoomCode();
@@ -121,6 +121,8 @@ io.on('connection', (socket) => {
       tricksWon: { A: 0, B: 0 },
       gameHistory: [],
       winner: null,
+      isPrivate: isPrivate,
+      createdAt: Date.now(),
     };
 
     const newPlayer = { id: playerId, name: playerName, team: null };
@@ -177,6 +179,14 @@ io.on('connection', (socket) => {
       player.team = team;
       io.to(roomCode).emit('teamsUpdated', room.teams);
       io.to(roomCode).emit('gameState', getPublicGameState(room));
+      
+      // Check if all players have joined and teams are full, then auto-start game
+      if (room.players.length === 4 && room.teams.A.length === 2 && room.teams.B.length === 2) {
+        room.dealerTeam = Math.random() > 0.5 ? 'A' : 'B';
+        room.state = 'choosingDealer';
+        io.to(roomCode).emit('gameState', getPublicGameState(room));
+        io.to(roomCode).emit('promptChooseDealer', { dealerTeam: room.dealerTeam });
+      }
     }
   });
 
@@ -315,10 +325,14 @@ io.on('connection', (socket) => {
       io.to(playerSocketId).emit('handUpdated', { hand });
     }
 
-    const currentIndex = room.players.findIndex(p => p.id === playerId);
-    const nextIndex = (currentIndex + 1) % 4;
-    room.currentTurn = room.players[nextIndex].id;
+    // Find the current player's index in the trick order
+    const currentPlayerIndex = room.players.findIndex(p => p.id === playerId);
+    
+    // Set the next player's turn
+    const nextPlayerIndex = (currentPlayerIndex + 1) % 4;
+    room.currentTurn = room.players[nextPlayerIndex].id;
 
+    // If this is the 4th card, complete the trick
     if (room.trick.length === 4) {
       const leadingSuit = room.trick[0].card.suit;
       const winnerIdx = getTrickWinner(room.trick.map(t => t.card), room.hukum, leadingSuit);
@@ -390,6 +404,113 @@ io.on('connection', (socket) => {
       const stateToSend = getPublicGameState(room);
       stateToSend.playerHand = (playerId && room.hands[playerId] && room.state !== 'gameOver') ? room.hands[playerId] : [];
       socket.emit('gameState', stateToSend);
+    }
+  });
+
+  socket.on('getPublicRooms', () => {
+    const publicRooms = Object.values(rooms)
+      .filter(room => !room.isPrivate && room.state === 'teamSelection' && room.players.length < 4)
+      .map(room => ({
+        roomCode: room.roomCode,
+        playerCount: room.players.length,
+        createdAt: room.createdAt
+      }))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    
+    socket.emit('publicRooms', publicRooms);
+  });
+
+  socket.on('quickJoin', ({ playerName, playerId }) => {
+    console.log('DEBUG: Backend quickJoin called with playerName:', playerName, 'playerId:', playerId);
+    console.log('DEBUG: Socket ID:', socket.id);
+    
+    // Find a public room with space
+    const availableRooms = Object.values(rooms)
+      .filter(room => !room.isPrivate && room.state === 'teamSelection' && room.players.length < 4);
+    
+    console.log('DEBUG: Available rooms found:', availableRooms.length);
+    
+    if (availableRooms.length > 0) {
+      console.log('DEBUG: Joining existing room');
+      // Join the first available room
+      const room = availableRooms[0];
+      const newPlayer = { id: playerId, name: playerName, team: null };
+      room.players.push(newPlayer);
+      room.playerSockets[playerId] = socket.id;
+
+      // Auto-assign team for quick join (first 2 players to Team A, next 2 to Team B)
+      if (room.players.length <= 2) {
+        newPlayer.team = 'A';
+        room.teams.A.push(playerId);
+      } else {
+        newPlayer.team = 'B';
+        room.teams.B.push(playerId);
+      }
+
+      console.log('DEBUG: Player added to room, team assigned:', newPlayer.team);
+      console.log('DEBUG: Room players count:', room.players.length);
+      socket.join(room.roomCode);
+      console.log('DEBUG: Socket joined room:', room.roomCode);
+      console.log('DEBUG: Emitting roomJoined with roomCode:', room.roomCode);
+      socket.emit('roomJoined', { roomCode: room.roomCode });
+      console.log('DEBUG: roomJoined event emitted');
+      io.to(room.roomCode).emit('playerJoined', newPlayer);
+      console.log('DEBUG: Emitting gameState for room:', room.roomCode);
+      io.to(room.roomCode).emit('gameState', getPublicGameState(room));
+      console.log('DEBUG: gameState event emitted');
+      
+      // Check if room is now full and auto-start game
+      if (room.players.length === 4 && room.teams.A.length === 2 && room.teams.B.length === 2) {
+        room.dealerTeam = Math.random() > 0.5 ? 'A' : 'B';
+        room.state = 'choosingDealer';
+        io.to(room.roomCode).emit('gameState', getPublicGameState(room));
+        io.to(room.roomCode).emit('promptChooseDealer', { dealerTeam: room.dealerTeam });
+      }
+    } else {
+      console.log('DEBUG: No available rooms, creating new room');
+      // No available rooms, create a new public one
+      let roomCode;
+      do {
+        roomCode = generateRoomCode();
+      } while (rooms[roomCode]);
+
+      rooms[roomCode] = {
+        roomCode,
+        players: [],
+        playerSockets: {},
+        state: 'teamSelection',
+        teams: { A: [], B: [] },
+        dealerTeam: null,
+        dealer: null,
+        hukum: null,
+        hukumChooser: null,
+        deck: [],
+        hands: {},
+        currentTurn: null,
+        trick: [],
+        trickStarter: null,
+        round: 0,
+        tricksWon: { A: 0, B: 0 },
+        gameHistory: [],
+        winner: null,
+        isPrivate: false,
+        createdAt: Date.now(),
+      };
+
+      const newPlayer = { id: playerId, name: playerName, team: 'A' };
+      rooms[roomCode].players.push(newPlayer);
+      rooms[roomCode].playerSockets[playerId] = socket.id;
+      rooms[roomCode].teams.A.push(playerId);
+
+      console.log('DEBUG: New room created with roomCode:', roomCode);
+      console.log('DEBUG: Room players count:', rooms[roomCode].players.length);
+      socket.join(roomCode);
+      console.log('DEBUG: Socket joined room:', roomCode);
+      console.log('DEBUG: Emitting roomCreated with roomCode:', roomCode);
+      socket.emit('roomCreated', { roomCode, player: newPlayer });
+      console.log('DEBUG: roomCreated event emitted');
+      io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode]));
+      console.log('DEBUG: gameState event emitted');
     }
   });
 

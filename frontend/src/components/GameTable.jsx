@@ -4,28 +4,33 @@ export default function GameTable({
   gameState,
   playerId,
   playerName,
-<<<<<<< HEAD
-  chooseDealerPlayer, // Prop function from App.jsx
-  chooseHukum,        // Prop function from App.jsx
-  playCard,           // Prop function from App.jsx
-  chooseTeam,         // <-- Add this prop (from App.jsx)
-  startGame           // <-- Add this prop (from App.jsx)
-=======
   playerHand,
   chooseTeam,
   startGame,
   chooseDealerPlayer,
   chooseHukum,
   playCard
->>>>>>> bd65a40 (new game logic)
 }) {
   const [trickVisible, setTrickVisible] = useState(true);
+  const [lastPlayedCard, setLastPlayedCard] = useState(null);
 
   useEffect(() => {
     if (gameState?.trick?.length === 0) {
       setTrickVisible(true);
+      setLastPlayedCard(null);
+    } else if (gameState?.trick?.length > 0) {
+      // Check if a new card was added to the trick
+      const currentTrick = gameState.trick;
+      if (currentTrick.length > 0) {
+        const newCard = currentTrick[currentTrick.length - 1];
+        if (newCard.playerId === playerId) {
+          setLastPlayedCard(newCard);
+          // Reset the last played card after animation completes
+          setTimeout(() => setLastPlayedCard(null), 1000);
+        }
+      }
     }
-  }, [gameState?.trick]);
+  }, [gameState?.trick, playerId]);
 
   if (!gameState) {
     return (
@@ -49,6 +54,12 @@ export default function GameTable({
     const hasLead = playerHand.some(c => c.suit === leadSuit);
     if (hasLead && card.suit !== leadSuit) return false;
     return true;
+  };
+
+  const getCardImage = (card) => {
+    const suit = card.suit.toLowerCase();
+    const value = card.value;
+    return `/cards/${suit}/${value}.webp`;
   };
 
   const getSuitEmoji = (suit) => {
@@ -235,8 +246,11 @@ export default function GameTable({
             <div className="hand-preview">
               {playerHand.map((card, index) => (
                 <div key={index} className="card-preview">
-                  <span className="card-value">{card.value}</span>
-                  <span className="card-suit">{getSuitEmoji(card.suit)}</span>
+                  <img
+                    src={getCardImage(card)}
+                    alt={`${card.value} of ${card.suit}`}
+                    style={{ width: '50px', height: '70px' }}
+                  />
                 </div>
               ))}
             </div>
@@ -301,73 +315,70 @@ export default function GameTable({
           )}
         </div>
 
-        <div className={`trick-area ${trickVisible ? '' : 'fade-out'}`}>
-          <h3>Current Trick</h3>
-          <div className="trick-cards">
-            {gameState.trick?.length > 0 ? (
-              gameState.trick.map((t, index) => (
-                <div key={index} className="played-card">
-                  <div className="card-display">
-                    <span className="card-value">{t.card.value}</span>
-                    <span className="card-suit">{getSuitEmoji(t.card.suit)}</span>
+        <div className="game-table-surface">
+          <div className="table-decoration"></div>
+          
+          <div className={`trick-area ${trickVisible ? '' : 'fade-out'}`}>
+            <h3>Current Trick</h3>
+            <div className="trick-cards">
+              {gameState.trick?.length > 0 ? (
+                gameState.trick.map((t, index) => (
+                  <div
+                    key={index}
+                    className={`played-card ${lastPlayedCard && t.card.value === lastPlayedCard.card.value && t.card.suit === lastPlayedCard.card.suit ? 'last-played' : ''}`}
+                  >
+                    <div className="card-display">
+                      <img
+                        src={getCardImage(t.card)}
+                        alt={`${t.card.value} of ${t.card.suit}`}
+                      />
+                    </div>
+                    <span className="player-name">{getPlayerName(t.playerId)}</span>
                   </div>
-                  <span className="player-name">{getPlayerName(t.playerId)}</span>
+                ))
+              ) : (
+                <div className="empty-trick">
+                  <p>No cards played yet</p>
                 </div>
-              ))
-            ) : (
-              <div className="empty-trick">
-                <p>No cards played yet</p>
+              )}
+            </div>
+          </div>
+
+          <div className="player-hand">
+            <h3>Your Hand ({playerHand.length} cards)</h3>
+            <div className="hand-cards">
+              {playerHand.map((card, index) => {
+                const canPlay = isValidPlay(card);
+                const isHukum = card.suit === gameState.hukum;
+                const isLeadingSuit = gameState.trick?.length > 0 && card.suit === gameState.trick[0].card.suit;
+                
+                return (
+                  <button
+                    key={`${card.suit}-${card.value}-${index}`}
+                    className={`card ${!canPlay ? 'invalid' : ''} ${!isMyTurn ? 'disabled' : ''} ${isHukum ? 'hukum-card' : ''} ${isLeadingSuit ? 'leading-suit' : ''}`}
+                    onClick={() => canPlay && isMyTurn && playCard(card)}
+                    disabled={!isMyTurn || !canPlay}
+                    title={!canPlay ? 'You must follow the leading suit if you have it' : ''}
+                  >
+                    <div className="card-content">
+                      <img
+                        src={getCardImage(card)}
+                        alt={`${card.value} of ${card.suit}`}
+                      />
+                      {isHukum && <div className="hukum-indicator">H</div>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {gameState.trick?.length === 0 && isMyTurn && (
+              <div className="play-hint">
+                <p>💡 You're leading this trick - play any card!</p>
               </div>
             )}
           </div>
         </div>
-
-        <div className="player-hand">
-          <h3>Your Hand ({playerHand.length} cards)</h3>
-          <div className="hand-cards">
-            {playerHand.map((card, index) => {
-              const canPlay = isValidPlay(card);
-              return (
-                <button
-                  key={`${card.suit}-${card.value}-${index}`}
-                  className={`card ${!canPlay ? 'invalid' : ''} ${!isMyTurn ? 'disabled' : ''}`}
-                  onClick={() => canPlay && isMyTurn && playCard(card)}
-                  disabled={!isMyTurn || !canPlay}
-                  title={!canPlay ? 'You must follow the leading suit if you have it' : ''}
-                >
-                  <div className="card-content">
-                    <span className="card-value">{card.value}</span>
-                    <span className="card-suit">{getSuitEmoji(card.suit)}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-<<<<<<< HEAD
-        {/* Player's Hand */}
-        <div className="hand">
-          <h3>Your Hand</h3>
-          <div className="hand-cards">
-            {playerHand.map((card, index) => (
-              <button
-                key={`${card.suit}-${card.value}-${index}`} // Better key
-                className={`card ${(!isMyTurn || !isValidPlay(card)) ? 'invalid' : ''}`}
-                onClick={() => handleCardClick(card)}
-                disabled={!isMyTurn || !isValidPlay(card)}
-              >
-                <span className="card-value">{card.value}</span>
-                <span className="card-suit">of {card.suit}</span>
-              </button>
-            ))}
-=======
-        {gameState.trick?.length === 0 && isMyTurn && (
-          <div className="play-hint">
-            <p>💡 You're leading this trick - play any card!</p>
->>>>>>> bd65a40 (new game logic)
-          </div>
-        )}
       </div>
     );
   }
