@@ -1,82 +1,157 @@
-// frontend/src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import GameTable from './components/GameTable'; // GameTable now handles Lobby view
-import './styles.css'; // Import global styles
+import Lobby from './components/Lobby';
+import GameTable from './components/GameTable';
+import WaitingRoom from './components/WaitingRoom';
+import './styles.css';
 
-// Connect to the backend server (proxied via Vite dev server)
-// Vite's proxy (defined in vite.config.js) will forward this to http://localhost:4000
 const socket = io();
 
 function App() {
-  const [view, setView] = useState('lobby'); // 'lobby' or 'game'
+  const [view, setView] = useState('lobby');
+  
+  // Check socket connection on component mount
+  useEffect(() => {
+    console.log('DEBUG: App component mounted, socket connected:', socket.connected);
+    console.log('DEBUG: Socket ID:', socket.id);
+    console.log('DEBUG: Socket io URI:', socket.io.uri);
+  }, []);
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
   const [playerId, setPlayerId] = useState('');
   const [gameState, setGameState] = useState(null);
-  const socketRef = useRef(socket); // Use ref to persist socket instance
+  const [playerHand, setPlayerHand] = useState([]);
+  const [isPrivateRoom, setIsPrivateRoom] = useState(false);
+  const [publicRooms, setPublicRooms] = useState([]);
+  const [isQuickJoin, setIsQuickJoin] = useState(false);
+  const socketRef = useRef(socket);
 
+  
   useEffect(() => {
-    // --- Setup Socket Listeners ---
     const handleRoomCreated = ({ roomCode }) => {
-      console.log("Room created:", roomCode);
+      // Clear the quick join timeout if it exists
+      if (socketRef.current.quickJoinTimeout) {
+        clearTimeout(socketRef.current.quickJoinTimeout);
+        socketRef.current.quickJoinTimeout = null;
+      }
+      
       setRoomCode(roomCode);
-      setView('game'); // Transition to game view (which shows lobby/team selection)
+      // If we're in quick join mode, transition to the game view (which will show WaitingRoom)
+      // The transition to actual game table will happen when we receive game state
+      setView('game');
     };
 
     const handleRoomJoined = ({ roomCode }) => {
-      console.log("Room joined:", roomCode);
+      // Clear the quick join timeout if it exists
+      if (socketRef.current.quickJoinTimeout) {
+        clearTimeout(socketRef.current.quickJoinTimeout);
+        socketRef.current.quickJoinTimeout = null;
+      }
+      
       setRoomCode(roomCode);
-      setView('game'); // Transition to game view (which shows lobby/team selection)
-    };
-
-    const handlePlayerJoined = (player) => {
-      console.log(`${player.name} joined the room.`);
-      // gameState update will handle UI changes
+      // If we're in quick join mode, transition to the game view (which will show WaitingRoom)
+      // The transition to actual game table will happen when we receive game state
+      setView('game');
     };
 
     const handleGameState = (state) => {
-      console.log("Received game state update:", state);
       setGameState(state);
+      if (state.playerHand) {
+        setPlayerHand(state.playerHand);
+      }
+      
+      // If we're in quick join mode and we've received a game state, transition to the game view
+      // when the game has started (state is no longer teamSelection)
+      if (isQuickJoin && state.state && state.state !== 'teamSelection') {
+        setView('game');
+        setIsQuickJoin(false); // Reset quick join flag after transitioning to game
+      }
     };
 
-    const handleCardPlayed = ({ playerId, card }) => {
-      console.log(`Player ${playerId} played ${card.value} of ${card.suit}`);
-      // gameState update will handle UI changes
+    const handleDealCards = ({ hand }) => {
+      setPlayerHand(hand);
+    };
+
+    const handleHandUpdated = ({ hand }) => {
+      setPlayerHand(hand);
+    };
+
+    const handleCardPlayed = ({ playerId, card, playerName }) => {
+      console.log(`${playerName} played ${card.value} of ${card.suit}`);
+    };
+
+    const handleTrickComplete = ({ winnerName, winnerTeam, tricksWon }) => {
+      console.log(`Trick won by ${winnerName} (Team ${winnerTeam})`);
+    };
+
+    const handleTrickCleared = () => {
+      // Optional: Additional handling if needed
+    };
+
+    const handleHukumChosen = ({ hukum, chooser }) => {
+      console.log(`${chooser} chose ${hukum} as Hukum`);
+    };
+
+    const handlePublicRooms = (rooms) => {
+      setPublicRooms(rooms);
     };
 
     const handleError = (msg) => {
-      console.error("Socket Error:", msg);
+      // Clear the quick join timeout if it exists
+      if (socketRef.current.quickJoinTimeout) {
+        clearTimeout(socketRef.current.quickJoinTimeout);
+        socketRef.current.quickJoinTimeout = null;
+      }
+      
+      // Reset quick join state if there's an error
+      if (isQuickJoin) {
+        setIsQuickJoin(false);
+      }
+      
       alert(`Error: ${msg}`);
     };
 
-    const handlePlayerLeft = ({ id, name }) => {
-      console.log(`Player ${name} (${id}) left the room.`);
-      // gameState update will handle UI changes
-    };
-
-    // Attach listeners
     socketRef.current.on('roomCreated', handleRoomCreated);
     socketRef.current.on('roomJoined', handleRoomJoined);
-    socketRef.current.on('playerJoined', handlePlayerJoined);
     socketRef.current.on('gameState', handleGameState);
+    socketRef.current.on('dealCards', handleDealCards);
+    socketRef.current.on('handUpdated', handleHandUpdated);
     socketRef.current.on('cardPlayed', handleCardPlayed);
+    socketRef.current.on('trickComplete', handleTrickComplete);
+    socketRef.current.on('trickCleared', handleTrickCleared);
+    socketRef.current.on('hukumChosen', handleHukumChosen);
+    socketRef.current.on('publicRooms', handlePublicRooms);
     socketRef.current.on('error', handleError);
-    socketRef.current.on('playerLeft', handlePlayerLeft);
+    
+    // Add debug prints for all socket events
+    socketRef.current.on('connect', () => {
+      console.log('DEBUG: Socket connected with ID:', socketRef.current.id);
+    });
+    
+    socketRef.current.on('disconnect', () => {
+      console.log('DEBUG: Socket disconnected');
+    });
+    
+    // Debug print for any event
+    socketRef.current.onAny((event, ...args) => {
+      console.log('DEBUG: Socket event received:', event, args);
+    });
 
-    // Cleanup listeners on component unmount
     return () => {
       socketRef.current.off('roomCreated', handleRoomCreated);
       socketRef.current.off('roomJoined', handleRoomJoined);
-      socketRef.current.off('playerJoined', handlePlayerJoined);
       socketRef.current.off('gameState', handleGameState);
+      socketRef.current.off('dealCards', handleDealCards);
+      socketRef.current.off('handUpdated', handleHandUpdated);
       socketRef.current.off('cardPlayed', handleCardPlayed);
+      socketRef.current.off('trickComplete', handleTrickComplete);
+      socketRef.current.off('trickCleared', handleTrickCleared);
+      socketRef.current.off('hukumChosen', handleHukumChosen);
+      socketRef.current.off('publicRooms', handlePublicRooms);
       socketRef.current.off('error', handleError);
-      socketRef.current.off('playerLeft', handlePlayerLeft);
     };
-  }, []); // Empty dependency array: run once on mount
+  }, [isQuickJoin, view]);
 
-  // --- Action Functions (Emit events to server) ---
   const createRoom = () => {
     const name = playerName.trim();
     if (!name) {
@@ -85,9 +160,7 @@ function App() {
     }
     const id = `${name.substring(0, 3)}${Date.now() % 10000}`;
     setPlayerId(id);
-    setPlayerName(name);
-    console.log("Creating room for:", name, id);
-    socketRef.current.emit('createRoom', { playerName: name, playerId: id });
+    socketRef.current.emit('createRoom', { playerName: name, playerId: id, isPrivate: isPrivateRoom });
   };
 
   const joinRoom = () => {
@@ -99,70 +172,116 @@ function App() {
     }
     const id = `${name.substring(0, 3)}${Date.now() % 10000}`;
     setPlayerId(id);
-    setPlayerName(name);
-    console.log("Joining room:", code, "as", name, id);
     socketRef.current.emit('joinRoom', { roomCode: code, playerName: name, playerId: id });
+  };
+
+  const getPublicRooms = () => {
+    socketRef.current.emit('getPublicRooms');
+  };
+
+  const quickJoin = (nameParam) => {
+    // Use the passed name parameter if available, otherwise fall back to state
+    const name = (nameParam || playerName).trim();
+    console.log("DEBUG: quickJoin called with playerName:", name, "nameParam:", nameParam);
+    if (!name) {
+      alert("Please enter your name");
+      return;
+    }
+    const id = `${name.substring(0, 3)}${Date.now() % 10000}`;
+    console.log("DEBUG: Generated playerId:", id);
+    setPlayerId(id);
+    setIsQuickJoin(true);
+    console.log("DEBUG: Set isQuickJoin to true, current view:", view);
+    
+    // Set a timeout to handle cases where the server doesn't respond
+    const quickJoinTimeout = setTimeout(() => {
+      if (isQuickJoin && view === 'lobby') {
+        alert("Failed to join a game. Please try again.");
+        setIsQuickJoin(false);
+      }
+    }, 10000); // 10 seconds timeout
+    
+    // Don't immediately transition to game view, wait for room creation/join confirmation
+    socketRef.current.emit('quickJoin', { playerName: name, playerId: id });
+    console.log("DEBUG: Emitted quickJoin socket event");
+    
+    // Store the timeout ID to clear it when we get a response
+    socketRef.current.quickJoinTimeout = quickJoinTimeout;
+  };
+
+  const leaveWaitingRoom = () => {
+    // Clear the quick join timeout if it exists
+    if (socketRef.current.quickJoinTimeout) {
+      clearTimeout(socketRef.current.quickJoinTimeout);
+      socketRef.current.quickJoinTimeout = null;
+    }
+    
+    setView('lobby');
+    setIsQuickJoin(false);
+    setGameState(null);
+    setRoomCode('');
   };
 
   const chooseTeam = (team) => {
     if (!roomCode) return;
-    console.log(`Player ${playerId} choosing team ${team}`);
     socketRef.current.emit('chooseTeam', { roomCode, team });
   };
 
   const startGame = () => {
     if (!roomCode) return;
-    console.log(`Player ${playerId} requesting to start game in room ${roomCode}`);
     socketRef.current.emit('startGame', { roomCode });
   };
 
   const chooseDealerPlayer = (chosenPlayerId) => {
     if (!roomCode) return;
-    console.log(`Player ${playerId} choosing dealer: ${chosenPlayerId}`);
     socketRef.current.emit('chooseDealerPlayer', { roomCode, playerId: chosenPlayerId });
   };
 
   const chooseHukum = (suit) => {
     if (!roomCode) return;
-    console.log(`Player ${playerId} choosing Hukum: ${suit}`);
     socketRef.current.emit('chooseHukum', { roomCode, suit });
   };
 
   const playCard = (card) => {
     if (!roomCode) return;
-    console.log(`Player ${playerId} playing card:`, card);
     socketRef.current.emit('playCard', { roomCode, card });
   };
 
-  const reconnect = () => {
-    if (roomCode) {
-        console.log("Requesting game state update...");
-        socketRef.current.emit('getGameState', { roomCode });
-    }
-  };
+  if (view === 'lobby') {
+    return (
+      <Lobby
+        createRoom={createRoom}
+        joinRoom={joinRoom}
+        roomCode={roomCode}
+        setRoomCode={setRoomCode}
+        playerName={playerName}
+        setPlayerName={setPlayerName}
+        isPrivateRoom={isPrivateRoom}
+        setIsPrivateRoom={setIsPrivateRoom}
+        publicRooms={publicRooms}
+        getPublicRooms={getPublicRooms}
+        quickJoin={quickJoin}
+      />
+    );
+  }
 
-  // --- Reconnection Logic ---
-  useEffect(() => {
-    if (view === 'game') {
-      reconnect(); // Initial sync
-      const interval = setInterval(reconnect, 5000); // Reconnect every 5s to sync state
-      return () => clearInterval(interval);
-    }
-    // Clear interval if view changes to 'lobby'
-  }, [view, roomCode]); // Depend on view and roomCode
+  if (view === 'game' && isQuickJoin) {
+    return (
+      <WaitingRoom
+        gameState={gameState}
+        playerName={playerName}
+        onLeaveWaiting={leaveWaitingRoom}
+      />
+    );
+  }
 
-  // --- Render Logic ---
-  // Initial lobby screen (create or join)
-  // This is now handled by the conditional rendering inside GameTable when view is 'game'
-  // but no roomCode is set, or gameState is null/undefined for the room.
-
-  // If in game view, show GameTable which handles lobby/team selection internally
   if (view === 'game') {
     return (
       <GameTable
         gameState={gameState}
         playerId={playerId}
         playerName={playerName}
+        playerHand={playerHand}
         chooseTeam={chooseTeam}
         startGame={startGame}
         chooseDealerPlayer={chooseDealerPlayer}
@@ -172,41 +291,22 @@ function App() {
     );
   }
 
-  // Fallback or initial render if view is somehow 'lobby' but we expect to go to GameTable
-  // This part is kept for robustness, though the flow should push to 'game' view quickly.
+  // This should not happen, but as a fallback, show the lobby
   return (
-    <div className="lobby">
-      <h1>🃏 Hukum Card Game</h1>
-      <p>4-player trick-taking game with teams</p>
-      <div className="section">
-        <h2>Create Game</h2>
-        <input
-          type="text"
-          placeholder="Your Name"
-          value={playerName}
-          onChange={(e) => setPlayerName(e.target.value)}
-        />
-        <button onClick={createRoom}>Create Room</button>
-      </div>
-      <div className="section">
-        <h2>Join Game</h2>
-        <input
-          type="text"
-          placeholder="Room Code"
-          value={roomCode}
-          onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-          maxLength="6"
-        />
-        <input
-          type="text"
-          placeholder="Your Name"
-          value={playerName}
-          onChange={(e) => setPlayerName(e.target.value)}
-        />
-        <button onClick={joinRoom}>Join Room</button>
-      </div>
-    </div>
-   );
+    <Lobby
+      createRoom={createRoom}
+      joinRoom={joinRoom}
+      roomCode={roomCode}
+      setRoomCode={setRoomCode}
+      playerName={playerName}
+      setPlayerName={setPlayerName}
+      isPrivateRoom={isPrivateRoom}
+      setIsPrivateRoom={setIsPrivateRoom}
+      publicRooms={publicRooms}
+      getPublicRooms={getPublicRooms}
+      quickJoin={quickJoin}
+    />
+  );
 }
 
 export default App;

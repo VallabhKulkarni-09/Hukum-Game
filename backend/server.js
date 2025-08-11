@@ -1,4 +1,3 @@
-// backend/server.js
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -6,6 +5,7 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+
 
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -15,10 +15,8 @@ const io = socketIo(server, {
   }
 });
 
-// In-memory storage for games
-const rooms = {}; // roomCode: gameState
+const rooms = {};
 
-// Helper: Create Deck
 function createDeck() {
   const suits = ['Clubs', 'Diamonds', 'Spades', 'Hearts'];
   const values = ['7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace'];
@@ -31,7 +29,6 @@ function createDeck() {
   return deck;
 }
 
-// Helper: Shuffle Array
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -40,65 +37,52 @@ function shuffle(array) {
   return array;
 }
 
-// Helper: Rank Value for Trick Comparison
 function rankValue(value) {
   const ranks = { '7': 0, '8': 1, '9': 2, '10': 3, 'Jack': 4, 'Queen': 5, 'King': 6, 'Ace': 7 };
   return ranks[value] || 0;
 }
 
-// Helper: Determine Trick Winner
 function getTrickWinner(cards, hukum, startingSuit) {
-  let highestCard = cards[0];
-  let winnerIndex = 0;
+  let maxSuitIndex = -1;
+  let maxTrumpIndex = -1;
+  let maxOtherIndex = -1;
 
-  for (let i = 1; i < cards.length; i++) {
+  for (let i = 0; i < cards.length; i++) {
     const card = cards[i];
-    // Trump beats non-trump
-    if (card.suit === hukum && highestCard.suit !== hukum) {
-      highestCard = card;
-      winnerIndex = i;
-    }
-    // Higher trump beats lower trump
-    else if (card.suit === hukum && highestCard.suit === hukum) {
-      if (rankValue(card.value) > rankValue(highestCard.value)) {
-        highestCard = card;
-        winnerIndex = i;
+    if (card.suit === startingSuit) {
+      if (maxSuitIndex === -1 || rankValue(card.value) > rankValue(cards[maxSuitIndex].value)) {
+        maxSuitIndex = i;
       }
-    }
-    // Non-trump follows suit beats lower non-trump of same suit
-    else if (card.suit === startingSuit && highestCard.suit !== startingSuit) {
-      highestCard = card;
-      winnerIndex = i;
-    }
-    else if (card.suit === startingSuit && highestCard.suit === startingSuit) {
-      if (rankValue(card.value) > rankValue(highestCard.value)) {
-        highestCard = card;
-        winnerIndex = i;
+    } else if (card.suit === hukum) {
+      if (maxTrumpIndex === -1 || rankValue(card.value) > rankValue(cards[maxTrumpIndex].value)) {
+        maxTrumpIndex = i;
+      }
+    } else {
+      if (maxOtherIndex === -1 || rankValue(card.value) > rankValue(cards[maxOtherIndex].value)) {
+        maxOtherIndex = i;
       }
     }
   }
-  return winnerIndex;
+
+  if (maxSuitIndex !== -1) {
+    return maxSuitIndex;
+  } else if (maxTrumpIndex !== -1) {
+    return maxTrumpIndex;
+  } else {
+    return maxOtherIndex;
+  }
 }
 
-// Helper: Generate Room Code
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-// Helper: Get Public Game State (hide hands from other players, send player's own hand)
-function getPublicGameState(room, playerIdForHand = null) {
-  const publicState = {
-    ...room,
-    // Always hide the full hands object from general state
-  };
+// Helper: Get Public Game State (hide hands)
+function getPublicGameState(room) {
+  const publicState = { ...room };
+  // Hide hands from other players
   delete publicState.hands;
-  delete publicState.deck; // Don't send the deck either
-
-  // If a specific player ID is provided, send their hand
-  if (playerIdForHand && room.hands && room.hands[playerIdForHand]) {
-      publicState.playerHand = room.hands[playerIdForHand];
-  }
-
+  // Optionally, reveal current player's hand to themselves on request
   return publicState;
 }
 
@@ -134,19 +118,27 @@ function isValidPlay(hand, card, trick, trickStarter, hukum, players) {
 }
 // --- End Helper Function ---
 
-// Socket.IO Connection Handling
+function isValidPlay(hand, card, trick, hukum) {
+  if (trick.length === 0) return true;
+  const leadingSuit = trick[0].card.suit;
+  const hasLeadingSuit = hand.some(c => c.suit === leadingSuit);
+  if (hasLeadingSuit && card.suit !== leadingSuit) {
+    return false;
+  }
+  return true;
+}
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Create Room
-  socket.on('createRoom', ({ playerName, playerId }) => {
+  socket.on('createRoom', ({ playerName, playerId, isPrivate = false }) => {
     let roomCode;
     do {
       roomCode = generateRoomCode();
     } while (rooms[roomCode]);
 
     rooms[roomCode] = {
-      roomCode,
+      roomCode, // Store room code inside the room object
       players: [],
       playerSockets: {},
       state: 'teamSelection',
@@ -154,14 +146,17 @@ io.on('connection', (socket) => {
       dealerTeam: null,
       dealer: null,
       hukum: null,
+      hukumChooser: null,
       deck: [],
       hands: {},
       currentTurn: null,
       trick: [],
       trickStarter: null,
-      round: 0,
+      round: 0, // 0-7
       scores: { A: 0, B: 0 },
       winner: null,
+      isPrivate: isPrivate,
+      createdAt: Date.now(),
     };
 
     const newPlayer = { id: playerId, name: playerName, team: null };
@@ -169,11 +164,11 @@ io.on('connection', (socket) => {
     rooms[roomCode].playerSockets[playerId] = socket.id;
 
     socket.join(roomCode);
-    socket.emit('roomCreated', { roomCode });
-    io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode]));
+    socket.emit('roomCreated', { roomCode, player: newPlayer });
+    // No need to emit playerJoined for the creator, they are already in the room state
+    io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode])); // Update for creator
   });
 
-  // Join Room
   socket.on('joinRoom', ({ roomCode, playerName, playerId }) => {
     const room = rooms[roomCode?.toUpperCase()];
     if (!room) {
@@ -185,7 +180,7 @@ io.on('connection', (socket) => {
       return;
     }
     if (room.players.some(p => p.id === playerId)) {
-      socket.emit('error', 'Player ID taken.');
+      socket.emit('error', 'Player ID already taken.');
       return;
     }
 
@@ -199,7 +194,6 @@ io.on('connection', (socket) => {
     io.to(roomCode).emit('gameState', getPublicGameState(room));
   });
 
-  // Choose Team
   socket.on('chooseTeam', ({ roomCode, team }) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'teamSelection') return;
@@ -211,15 +205,15 @@ io.on('connection', (socket) => {
     if (!player) return;
 
     if (player.team) {
-        const oldTeamIndex = room.teams[player.team].indexOf(playerId);
-        if (oldTeamIndex > -1) room.teams[player.team].splice(oldTeamIndex, 1);
+      const oldTeamIndex = room.teams[player.team].indexOf(playerId);
+      if (oldTeamIndex > -1) room.teams[player.team].splice(oldTeamIndex, 1);
     }
 
     if (room.teams[team].length < 2) {
         room.teams[team].push(playerId);
         player.team = team;
-        io.to(roomCode).emit('teamsUpdated', room.teams);
-        io.to(roomCode).emit('gameState', getPublicGameState(room));
+        io.to(roomCode).emit('teamsUpdated', room.teams); // Update teams for all
+        io.to(roomCode).emit('gameState', getPublicGameState(room)); // Update full state
     }
   });
 
@@ -228,16 +222,18 @@ io.on('connection', (socket) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'teamSelection') return;
     if (room.players.length !== 4) {
-         socket.emit('error', 'Need 4 players to start.');
-         return;
+      socket.emit('error', 'Need 4 players to start.');
+      return;
     }
     if (room.teams.A.length !== 2 || room.teams.B.length !== 2) {
-        socket.emit('error', 'Teams must be full (2 players each) to start.');
-        return;
+      socket.emit('error', 'Teams must be full (2 players each).');
+      return;
     }
 
+    // Assign teams to players (in case they weren't set properly)
     room.players.forEach(player => {
         if (!player.team) {
+             // Assign to the team with space
              if (room.teams.A.length < 2) {
                  room.teams.A.push(player.id);
                  player.team = 'A';
@@ -248,57 +244,68 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Choose dealer team (random)
     room.dealerTeam = Math.random() > 0.5 ? 'A' : 'B';
     room.state = 'choosingDealer';
     io.to(roomCode).emit('gameState', getPublicGameState(room));
-    io.to(roomCode).emit('promptChooseDealerTeam', { dealerTeam: room.dealerTeam });
+    io.to(roomCode).emit('promptChooseDealer', { dealerTeam: room.dealerTeam });
   });
 
-  // Choose Dealer Player (after team is chosen)
   socket.on('chooseDealerPlayer', ({ roomCode, playerId: chosenDealerId }) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'choosingDealer') return;
 
     const dealerPlayer = room.players.find(p => p.id === chosenDealerId);
     if (!dealerPlayer || dealerPlayer.team !== room.dealerTeam) {
-        socket.emit('error', 'Invalid dealer selection.');
-        return;
+      socket.emit('error', 'Invalid dealer selection.');
+      return;
     }
 
     room.dealer = chosenDealerId;
-
-    // Deal cards - STEP 1: Deal first 4 cards to each player
+    
+    // Deal cards
     let deck = createDeck();
     deck = shuffle(deck);
-    room.deck = deck; // Store for later
 
+    // Deal 4 cards to each player
     for (let i = 0; i < 4; i++) {
-        const playerId = room.players[i].id;
-        room.hands[playerId] = deck.splice(0, 4);
-        // Send the initial hand only to the player who received it
-        const playerSocketId = room.playerSockets[playerId];
-        if (playerSocketId) {
-            io.to(playerSocketId).emit('dealFirstHalf', room.hands[playerId]); // New event
+        room.hands[room.players[i].id] = deck.splice(0, 4);
+    }
+
+    // Deal remaining 4 cards after a short delay
+    setTimeout(() => {
+        for (let i = 0; i < 4; i++) {
+            const playerId = room.players[i].id;
+            const newCards = deck.splice(0, 4);
+            room.hands[playerId] = room.hands[playerId].concat(newCards);
+            
+            // Send the full hand only to the player who received it
+            const playerSocketId = room.playerSockets[playerId];
+            if (playerSocketId) {
+                io.to(playerSocketId).emit('dealSecondHalf', newCards);
+            }
         }
-    }
+        room.state = 'choosingHukum';
 
-    // Update state to 'choosingHukum' immediately so Hukum chooser knows it's their turn
-    room.state = 'choosingHukum';
-
-    // Determine who chooses Hukum (player after dealer)
-    const dealerIndex = room.players.findIndex(p => p.id === room.dealer);
-    const hukumChooser = room.players[(dealerIndex + 1) % 4];
-    const hukumChooserSocketId = room.playerSockets[hukumChooser.id];
-    if (hukumChooserSocketId) {
-        io.to(hukumChooserSocketId).emit('promptChooseHukum');
-    }
-
-    // Broadcast the updated state (including dealer, but not full hands yet for others)
-    io.to(roomCode).emit('gameState', getPublicGameState(room));
-    // Note: Players will get their own hand via 'dealFirstHalf' or 'gameState' with playerHand if they reconnect
+        // Determine who chooses Hukum (player after dealer)
+        const dealerIndex = room.players.findIndex(p => p.id === room.dealer);
+        const hukumChooser = room.players[(dealerIndex + 1) % 4];
+        const hukumChooserSocketId = room.playerSockets[hukumChooser.id];
+        if (hukumChooserSocketId) {
+            io.to(hukumChooserSocketId).emit('promptChooseHukum');
+        }
+        room.round = 0; // Initialize round counter
+        room.scores = { A: 0, B: 0 }; // Initialize scores
+        room.trick = [];
+        const firstPlayerToPlay = room.players[(dealerIndex + 2) % 4];
+        room.currentTurn = firstPlayerToPlay.id;
+        room.trickStarter = room.currentTurn;
+        
+        io.to(roomCode).emit('gameState', getPublicGameState(room));
+    }, 1500); // 1.5 second delay for dealing
   });
 
-  // Choose Hukum Suit - STEP 2: After seeing first 4 cards
+  // Choose Hukum Suit
   socket.on('chooseHukum', ({ roomCode, suit }) => {
     const room = rooms[roomCode];
     // Allow choosing Hukum even if state is still 'choosingDealer' (in case of race condition)
@@ -308,6 +315,7 @@ io.on('connection', (socket) => {
     const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
     if (!playerId) return;
 
+    // Verify this player is the one who should choose Hukum
     const dealerIndex = room.players.findIndex(p => p.id === room.dealer);
     const expectedChooserId = room.players[(dealerIndex + 1) % 4].id;
     if (playerId !== expectedChooserId) {
@@ -315,53 +323,33 @@ io.on('connection', (socket) => {
         return;
     }
 
-    if (!['Clubs', 'Diamonds', 'Spades', 'Hearts'].includes(suit)) {
-        socket.emit('error', 'Invalid suit.');
-        return;
+    const chooserHand = room.hands[playerId];
+    const validSuits = [...new Set(chooserHand.map(card => card.suit))];
+    if (!validSuits.includes(suit)) {
+      socket.emit('error', 'You must choose Hukum from your 8 cards.');
+      return;
     }
 
+    for (let i = 0; i < 4; i++) {
+      const pid = room.players[i].id;
+      const next4 = room.deck.splice(0, 4);
+      room.hands[pid] = room.hands[pid].concat(next4);
+    }
+
+    room.players.forEach(player => {
+      const playerSocketId = room.playerSockets[player.id];
+      if (playerSocketId) {
+        io.to(playerSocketId).emit('dealCards', { hand: room.hands[player.id] });
+      }
+    });
+
     room.hukum = suit;
-
-    // Deal remaining 4 cards to each player after a short delay
-    setTimeout(() => {
-        // Deal remaining 4 cards
-        for (let i = 0; i < 4; i++) {
-            const playerId = room.players[i].id;
-            const newCards = room.deck.splice(0, 4); // Use the stored deck
-            room.hands[playerId] = room.hands[playerId].concat(newCards);
-
-            // Send the second half of the hand only to the player who received it
-            const playerSocketId = room.playerSockets[playerId];
-            if (playerSocketId) {
-                io.to(playerSocketId).emit('dealSecondHalf', newCards); // New event
-            }
-        }
-
-        // Now the game officially starts
-        room.state = 'playing';
-        room.round = 0;
-        room.scores = { A: 0, B: 0 };
-        room.trick = [];
-        const firstPlayerToPlay = room.players[(dealerIndex + 2) % 4];
-        room.currentTurn = firstPlayerToPlay.id;
-        room.trickStarter = room.currentTurn;
-
-        // Broadcast the final game state with full hands (each player gets theirs via playerHand)
-        io.to(roomCode).emit('gameState', getPublicGameState(room));
-        // Also send the full hand to each player individually for clarity
-        for (let i = 0; i < 4; i++) {
-            const playerId = room.players[i].id;
-            const playerSocketId = room.playerSockets[playerId];
-            if (playerSocketId) {
-                 // Send the complete hand again
-                 io.to(playerSocketId).emit('fullHand', room.hands[playerId]);
-            }
-        }
-
-    }, 1500); // 1.5 second delay for dealing the second half
+    room.state = 'playing';
+    // round, scores, trick, currentTurn, trickStarter are already set in chooseDealerPlayer
+    io.to(roomCode).emit('gameState', getPublicGameState(room));
   });
 
-  // Play Card - Uses the corrected isValidPlay function
+  // Play Card
   socket.on('playCard', ({ roomCode, card }) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'playing') return;
@@ -373,51 +361,81 @@ io.on('connection', (socket) => {
     }
 
     const hand = room.hands[playerId];
-    // --- Use the corrected isValidPlay function ---
+    // Basic validation
+    const cardIndex = hand.findIndex(c => c.suit === card.suit && c.value === card.value);
+    if (cardIndex === -1) {
+        socket.emit('error', 'Card not in hand.');
+        return;
+    }
+
+    // --- More detailed play validation ---
+    const isValidPlay = (hand, card, trick, trickStarter, hukum, players) => {
+        if (trick.length === 0) return true; // First card is always valid
+
+        const startingSuit = trick[0].card.suit;
+        const hasCurrentSuit = hand.some(c => c.suit === startingSuit);
+        const hasHukum = hand.some(c => c.suit === hukum);
+
+        if (hasCurrentSuit && card.suit !== startingSuit) {
+            return false; // Must follow suit
+        }
+        if (!hasCurrentSuit && card.suit !== hukum && hasHukum) {
+            return false; // Must play trump if no suit and has trump
+        }
+        return true;
+    };
+    // --- End validation ---
+
     const isValid = isValidPlay(hand, card, room.trick, room.trickStarter, room.hukum, room.players);
     if (!isValid) {
       socket.emit('error', 'Invalid play according to game rules.');
       return;
     }
 
-    // If valid, remove the card from hand
-    const cardIndex = hand.findIndex(c => c.suit === card.suit && c.value === card.value);
-    if (cardIndex !== -1) { // Should always be true if isValid is true
-        hand.splice(cardIndex, 1);
+    // Remove card from hand
+    hand.splice(cardIndex, 1);
+    // Add card to trick
+    room.trick.push({ playerId, card });
+    io.to(roomCode).emit('cardPlayed', { playerId, card, playerName: room.players.find(p => p.id === playerId).name });
+    const playerSocketId = room.playerSockets[playerId];
+    if (playerSocketId) {
+      io.to(playerSocketId).emit('handUpdated', { hand });
     }
 
-    // Add card to the trick
-    room.trick.push({ playerId, card });
+    // Find the current player's index in the trick order
+    const currentPlayerIndex = room.players.findIndex(p => p.id === playerId);
+    
+    // Set the next player's turn
+    const nextPlayerIndex = (currentPlayerIndex + 1) % 4;
+    room.currentTurn = room.players[nextPlayerIndex].id;
 
-    io.to(roomCode).emit('cardPlayed', { playerId, card });
-
-    // Move to next player
-    const currentIndex = room.players.findIndex(p => p.id === playerId);
-    room.currentTurn = room.players[(currentIndex + 1) % 4].id;
-
-    // Check if trick is complete
+    // Check if trick is complete (4 cards played)
     if (room.trick.length === 4) {
-      const startingSuit = room.trick[0].card.suit;
-      const winnerIdx = getTrickWinner(room.trick.map(t => t.card), room.hukum, startingSuit);
+      const leadingSuit = room.trick[0].card.suit;
+      const winnerIdx = getTrickWinner(room.trick.map(t => t.card), room.hukum, leadingSuit);
       const winnerId = room.trick[winnerIdx].playerId;
       const winnerPlayer = room.players.find(p => p.id === winnerId);
       const winnerTeam = winnerPlayer.team;
 
       room.scores[winnerTeam] += 1;
+      
+      // Clear trick and set next leader
       room.trick = [];
       room.currentTurn = winnerId;
       room.trickStarter = winnerId;
       room.round += 1;
 
-      const targetA = room.dealerTeam === 'A' ? 4 : 5;
-      const targetB = room.dealerTeam === 'B' ? 4 : 5;
-      if (room.scores.A >= targetA || room.scores.B >= targetB || room.round >= 8) {
+      // Check for win condition
+      const targetA = room.dealerTeam === 'A' ? 5 : 4;
+      const targetB = room.dealerTeam === 'B' ? 5 : 4;
+      if (room.scores.A >= targetA || room.scores.B >= targetB || room.round >= 8) { // Max 8 rounds
         room.state = 'gameOver';
         if (room.scores.A >= targetA) {
             room.winner = 'Team A';
         } else if (room.scores.B >= targetB) {
             room.winner = 'Team B';
         } else {
+            // Tie or end of rounds, determine by score
             room.winner = room.scores.A > room.scores.B ? 'Team A' : (room.scores.B > room.scores.A ? 'Team B' : 'Draw');
         }
       }
@@ -426,13 +444,17 @@ io.on('connection', (socket) => {
     io.to(roomCode).emit('gameState', getPublicGameState(room));
   });
 
-  // Get Game State (for reconnection, sends player's own hand)
+  // Get Game State (for reconnection)
   socket.on('getGameState', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (room) {
       const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
-      // Send the public state, including the requesting player's hand if available
-      io.to(socket.id).emit('gameState', getPublicGameState(room, playerId));
+      const stateToSend = getPublicGameState(room);
+      if (playerId && room.hands[playerId]) {
+          // Send player's own hand
+          stateToSend.playerHand = room.hands[playerId];
+      }
+      io.to(socket.id).emit('gameState', stateToSend);
     }
   });
 
@@ -448,6 +470,7 @@ io.on('connection', (socket) => {
             const player = room.players.splice(playerIndex, 1)[0];
             delete room.playerSockets[playerId];
 
+            // Remove from team
             if (player.team && room.teams[player.team]) {
                 const teamIndex = room.teams[player.team].indexOf(playerId);
                 if (teamIndex > -1) room.teams[player.team].splice(teamIndex, 1);
@@ -455,6 +478,7 @@ io.on('connection', (socket) => {
 
             io.to(roomCode).emit('playerLeft', { id: playerId, name: player.name });
             io.to(roomCode).emit('gameState', getPublicGameState(room));
+            // Optionally, update teams if someone leaves pre-game
             if (room.state === 'teamSelection') {
                 io.to(roomCode).emit('teamsUpdated', room.teams);
             }
