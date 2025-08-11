@@ -368,11 +368,11 @@ io.on('connection', (socket) => {
         const otherTeamTricks = room.tricksWon[otherTeam];
         let gameEnded = false;
 
-        if (dealerTeamTricks >= 5) {
+        if (dealerTeamTricks = 4) {
           room.state = 'gameOver';
           room.winner = `Team ${room.dealerTeam}`;
           gameEnded = true;
-        } else if (otherTeamTricks >= 4) {
+        } else if (otherTeamTricks = 5) {
           room.state = 'gameOver';
           room.winner = `Team ${otherTeam}`;
           gameEnded = true;
