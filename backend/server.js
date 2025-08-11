@@ -77,11 +77,46 @@ function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+// Helper: Get Public Game State (hide hands)
 function getPublicGameState(room) {
   const publicState = { ...room };
+  // Hide hands from other players
   delete publicState.hands;
+  // Optionally, reveal current player's hand to themselves on request
   return publicState;
 }
+
+// --- CORRECTED Helper Function: Validate Card Play ---
+// This is the key fix for allowing any card when lacking the lead suit.
+function isValidPlay(hand, card, trick, trickStarter, hukum, players) {
+  // 1. Check if the card is actually in the player's hand
+  const cardInHand = hand.find(c => c.suit === card.suit && c.value === card.value);
+  if (!cardInHand) {
+    return false; // Card not in hand is always invalid
+  }
+
+  // 2. If this is the first card played in the trick, any card is valid
+  if (trick.length === 0) {
+    return true;
+  }
+
+  // 3. It's not the first card, so we need to check the suit rules
+  const startingSuit = trick[0].card.suit;
+
+  // Check if the player has any cards of the suit that was led
+  const hasStartingSuit = hand.some(c => c.suit === startingSuit);
+
+  // 4. If the player HAS the starting suit, they MUST play a card of that suit
+  if (hasStartingSuit) {
+    return card.suit === startingSuit;
+  }
+
+  // 5. If the player does NOT have the starting suit, they can play ANY card
+  // This includes trumps (Hukum) or any other suit.
+  // No further checks are needed.
+  return true;
+}
+// --- End Helper Function ---
 
 function isValidPlay(hand, card, trick, hukum) {
   if (trick.length === 0) return true;
@@ -102,8 +137,8 @@ io.on('connection', (socket) => {
       roomCode = generateRoomCode();
     } while (rooms[roomCode]);
 
-  rooms[roomCode] = {
-      roomCode,
+    rooms[roomCode] = {
+      roomCode, // Store room code inside the room object
       players: [],
       playerSockets: {},
       state: 'teamSelection',
@@ -117,9 +152,8 @@ io.on('connection', (socket) => {
       currentTurn: null,
       trick: [],
       trickStarter: null,
-      round: 0,
-      tricksWon: { A: 0, B: 0 },
-      gameHistory: [],
+      round: 0, // 0-7
+      scores: { A: 0, B: 0 },
       winner: null,
       isPrivate: isPrivate,
       createdAt: Date.now(),
@@ -131,7 +165,8 @@ io.on('connection', (socket) => {
 
     socket.join(roomCode);
     socket.emit('roomCreated', { roomCode, player: newPlayer });
-    io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode]));
+    // No need to emit playerJoined for the creator, they are already in the room state
+    io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode])); // Update for creator
   });
 
   socket.on('joinRoom', ({ roomCode, playerName, playerId }) => {
@@ -175,21 +210,14 @@ io.on('connection', (socket) => {
     }
 
     if (room.teams[team].length < 2) {
-      room.teams[team].push(playerId);
-      player.team = team;
-      io.to(roomCode).emit('teamsUpdated', room.teams);
-      io.to(roomCode).emit('gameState', getPublicGameState(room));
-      
-      // Check if all players have joined and teams are full, then auto-start game
-      if (room.players.length === 4 && room.teams.A.length === 2 && room.teams.B.length === 2) {
-        room.dealerTeam = Math.random() > 0.5 ? 'A' : 'B';
-        room.state = 'choosingDealer';
-        io.to(roomCode).emit('gameState', getPublicGameState(room));
-        io.to(roomCode).emit('promptChooseDealer', { dealerTeam: room.dealerTeam });
-      }
+        room.teams[team].push(playerId);
+        player.team = team;
+        io.to(roomCode).emit('teamsUpdated', room.teams); // Update teams for all
+        io.to(roomCode).emit('gameState', getPublicGameState(room)); // Update full state
     }
   });
 
+  // Start Game
   socket.on('startGame', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'teamSelection') return;
@@ -202,6 +230,21 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Assign teams to players (in case they weren't set properly)
+    room.players.forEach(player => {
+        if (!player.team) {
+             // Assign to the team with space
+             if (room.teams.A.length < 2) {
+                 room.teams.A.push(player.id);
+                 player.team = 'A';
+             } else if (room.teams.B.length < 2) {
+                 room.teams.B.push(player.id);
+                 player.team = 'B';
+             }
+        }
+    });
+
+    // Choose dealer team (random)
     room.dealerTeam = Math.random() > 0.5 ? 'A' : 'B';
     room.state = 'choosingDealer';
     io.to(roomCode).emit('gameState', getPublicGameState(room));
@@ -219,41 +262,65 @@ io.on('connection', (socket) => {
     }
 
     room.dealer = chosenDealerId;
+    
+    // Deal cards
     let deck = createDeck();
     deck = shuffle(deck);
-    room.deck = deck;
 
+    // Deal 4 cards to each player
     for (let i = 0; i < 4; i++) {
-      const playerId = room.players[i].id;
-      room.hands[playerId] = deck.splice(0, 4);
+        room.hands[room.players[i].id] = deck.splice(0, 4);
     }
 
-    room.players.forEach(player => {
-      const playerSocketId = room.playerSockets[player.id];
-      if (playerSocketId) {
-        io.to(playerSocketId).emit('dealCards', { hand: room.hands[player.id] });
-      }
-    });
+    // Deal remaining 4 cards after a short delay
+    setTimeout(() => {
+        for (let i = 0; i < 4; i++) {
+            const playerId = room.players[i].id;
+            const newCards = deck.splice(0, 4);
+            room.hands[playerId] = room.hands[playerId].concat(newCards);
+            
+            // Send the full hand only to the player who received it
+            const playerSocketId = room.playerSockets[playerId];
+            if (playerSocketId) {
+                io.to(playerSocketId).emit('dealSecondHalf', newCards);
+            }
+        }
+        room.state = 'choosingHukum';
 
-    room.state = 'choosingHukum';
-    const hukumChooserTeam = room.dealerTeam === 'A' ? 'B' : 'A';
-    const hukumChooserIndex = Math.floor(Math.random() * 2);
-    room.hukumChooser = room.teams[hukumChooserTeam][hukumChooserIndex];
-    const hukumChooserSocketId = room.playerSockets[room.hukumChooser];
-    if (hukumChooserSocketId) {
-      io.to(hukumChooserSocketId).emit('promptChooseHukum', { hand: room.hands[room.hukumChooser] });
-    }
-    io.to(roomCode).emit('gameState', getPublicGameState(room));
+        // Determine who chooses Hukum (player after dealer)
+        const dealerIndex = room.players.findIndex(p => p.id === room.dealer);
+        const hukumChooser = room.players[(dealerIndex + 1) % 4];
+        const hukumChooserSocketId = room.playerSockets[hukumChooser.id];
+        if (hukumChooserSocketId) {
+            io.to(hukumChooserSocketId).emit('promptChooseHukum');
+        }
+        room.round = 0; // Initialize round counter
+        room.scores = { A: 0, B: 0 }; // Initialize scores
+        room.trick = [];
+        const firstPlayerToPlay = room.players[(dealerIndex + 2) % 4];
+        room.currentTurn = firstPlayerToPlay.id;
+        room.trickStarter = room.currentTurn;
+        
+        io.to(roomCode).emit('gameState', getPublicGameState(room));
+    }, 1500); // 1.5 second delay for dealing
   });
 
+  // Choose Hukum Suit
   socket.on('chooseHukum', ({ roomCode, suit }) => {
     const room = rooms[roomCode];
-    if (!room || room.state !== 'choosingHukum') return;
+    // Allow choosing Hukum even if state is still 'choosingDealer' (in case of race condition)
+    // or if it's correctly 'choosingHukum'
+    if (!room || (room.state !== 'choosingDealer' && room.state !== 'choosingHukum')) return;
 
     const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
-    if (!playerId || playerId !== room.hukumChooser) {
-      socket.emit('error', 'Not your turn to choose Hukum.');
-      return;
+    if (!playerId) return;
+
+    // Verify this player is the one who should choose Hukum
+    const dealerIndex = room.players.findIndex(p => p.id === room.dealer);
+    const expectedChooserId = room.players[(dealerIndex + 1) % 4].id;
+    if (playerId !== expectedChooserId) {
+        socket.emit('error', 'Not your turn to choose Hukum.');
+        return;
     }
 
     const chooserHand = room.hands[playerId];
@@ -278,16 +345,11 @@ io.on('connection', (socket) => {
 
     room.hukum = suit;
     room.state = 'playing';
-    room.round = 0;
-    room.tricksWon = { A: 0, B: 0 };
-    room.trick = [];
-    const firstPlayerTeam = room.dealerTeam;
-    room.currentTurn = room.teams[firstPlayerTeam][0];
-    room.trickStarter = room.currentTurn;
+    // round, scores, trick, currentTurn, trickStarter are already set in chooseDealerPlayer
     io.to(roomCode).emit('gameState', getPublicGameState(room));
-    io.to(roomCode).emit('hukumChosen', { hukum: suit, chooser: room.players.find(p => p.id === room.hukumChooser).name });
   });
 
+  // Play Card
   socket.on('playCard', ({ roomCode, card }) => {
     const room = rooms[roomCode];
     if (!room || room.state !== 'playing') return;
@@ -299,25 +361,40 @@ io.on('connection', (socket) => {
     }
 
     const hand = room.hands[playerId];
+    // Basic validation
     const cardIndex = hand.findIndex(c => c.suit === card.suit && c.value === card.value);
     if (cardIndex === -1) {
-      socket.emit('error', 'Card not in your hand.');
-      return;
+        socket.emit('error', 'Card not in hand.');
+        return;
     }
 
-    if (!isValidPlay(hand, card, room.trick, room.hukum)) {
-      let errorMessage = 'Invalid play. ';
-      if (room.trick.length > 0) {
-        const leadingSuit = room.trick[0].card.suit;
-        if (hand.some(c => c.suit === leadingSuit)) {
-          errorMessage += `You must follow the leading suit (${leadingSuit}).`;
+    // --- More detailed play validation ---
+    const isValidPlay = (hand, card, trick, trickStarter, hukum, players) => {
+        if (trick.length === 0) return true; // First card is always valid
+
+        const startingSuit = trick[0].card.suit;
+        const hasCurrentSuit = hand.some(c => c.suit === startingSuit);
+        const hasHukum = hand.some(c => c.suit === hukum);
+
+        if (hasCurrentSuit && card.suit !== startingSuit) {
+            return false; // Must follow suit
         }
-      }
-      socket.emit('error', errorMessage);
+        if (!hasCurrentSuit && card.suit !== hukum && hasHukum) {
+            return false; // Must play trump if no suit and has trump
+        }
+        return true;
+    };
+    // --- End validation ---
+
+    const isValid = isValidPlay(hand, card, room.trick, room.trickStarter, room.hukum, room.players);
+    if (!isValid) {
+      socket.emit('error', 'Invalid play according to game rules.');
       return;
     }
 
+    // Remove card from hand
     hand.splice(cardIndex, 1);
+    // Add card to trick
     room.trick.push({ playerId, card });
     io.to(roomCode).emit('cardPlayed', { playerId, card, playerName: room.players.find(p => p.id === playerId).name });
     const playerSocketId = room.playerSockets[playerId];
@@ -332,7 +409,7 @@ io.on('connection', (socket) => {
     const nextPlayerIndex = (currentPlayerIndex + 1) % 4;
     room.currentTurn = room.players[nextPlayerIndex].id;
 
-    // If this is the 4th card, complete the trick
+    // Check if trick is complete (4 cards played)
     if (room.trick.length === 4) {
       const leadingSuit = room.trick[0].card.suit;
       const winnerIdx = getTrickWinner(room.trick.map(t => t.card), room.hukum, leadingSuit);
@@ -340,180 +417,48 @@ io.on('connection', (socket) => {
       const winnerPlayer = room.players.find(p => p.id === winnerId);
       const winnerTeam = winnerPlayer.team;
 
-      room.tricksWon[winnerTeam] += 1;
-      room.gameHistory.push({
-        round: room.round + 1,
-        trick: [...room.trick],
-        winner: winnerId,
-        winnerTeam,
-        leadingSuit
-      });
+      room.scores[winnerTeam] += 1;
+      
+      // Clear trick and set next leader
+      room.trick = [];
+      room.currentTurn = winnerId;
+      room.trickStarter = winnerId;
+      room.round += 1;
 
-      io.to(roomCode).emit('trickComplete', {
-        winner: winnerId,
-        winnerName: winnerPlayer.name,
-        winnerTeam,
-        trick: room.trick,
-        tricksWon: room.tricksWon
-      });
-
-      setTimeout(() => {
-        room.trick = [];
-        room.currentTurn = winnerId;
-        room.trickStarter = winnerId;
-        room.round += 1;
-
-        const dealerTeamTricks = room.tricksWon[room.dealerTeam];
-        const otherTeam = room.dealerTeam === 'A' ? 'B' : 'A';
-        const otherTeamTricks = room.tricksWon[otherTeam];
-        let gameEnded = false;
-
-        if (dealerTeamTricks = 4) {
-          room.state = 'gameOver';
-          room.winner = `Team ${room.dealerTeam}`;
-          gameEnded = true;
-        } else if (otherTeamTricks = 5) {
-          room.state = 'gameOver';
-          room.winner = `Team ${otherTeam}`;
-          gameEnded = true;
-        } else if (room.round >= 8) {
-          room.state = 'gameOver';
-          room.winner = dealerTeamTricks > otherTeamTricks ? `Team ${room.dealerTeam}` : otherTeamTricks > dealerTeamTricks ? `Team ${otherTeam}` : 'Draw';
-          gameEnded = true;
+      // Check for win condition
+      const targetA = room.dealerTeam === 'A' ? 5 : 4;
+      const targetB = room.dealerTeam === 'B' ? 5 : 4;
+      if (room.scores.A >= targetA || room.scores.B >= targetB || room.round >= 8) { // Max 8 rounds
+        room.state = 'gameOver';
+        if (room.scores.A >= targetA) {
+            room.winner = 'Team A';
+        } else if (room.scores.B >= targetB) {
+            room.winner = 'Team B';
+        } else {
+            // Tie or end of rounds, determine by score
+            room.winner = room.scores.A > room.scores.B ? 'Team A' : (room.scores.B > room.scores.A ? 'Team B' : 'Draw');
         }
-
-        io.to(roomCode).emit('trickCleared');
-        io.to(roomCode).emit('gameState', getPublicGameState(room));
-        if (gameEnded) {
-          io.to(roomCode).emit('gameOver', {
-            winner: room.winner,
-            finalScores: room.tricksWon,
-            gameHistory: room.gameHistory
-          });
-        }
-      }, 2500);
-    } else {
-      io.to(roomCode).emit('gameState', getPublicGameState(room));
+      }
     }
+
+    io.to(roomCode).emit('gameState', getPublicGameState(room));
   });
 
+  // Get Game State (for reconnection)
   socket.on('getGameState', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (room) {
       const playerId = Object.keys(room.playerSockets).find(id => room.playerSockets[id] === socket.id);
       const stateToSend = getPublicGameState(room);
-      stateToSend.playerHand = (playerId && room.hands[playerId] && room.state !== 'gameOver') ? room.hands[playerId] : [];
-      socket.emit('gameState', stateToSend);
+      if (playerId && room.hands[playerId]) {
+          // Send player's own hand
+          stateToSend.playerHand = room.hands[playerId];
+      }
+      io.to(socket.id).emit('gameState', stateToSend);
     }
   });
 
-  socket.on('getPublicRooms', () => {
-    const publicRooms = Object.values(rooms)
-      .filter(room => !room.isPrivate && room.state === 'teamSelection' && room.players.length < 4)
-      .map(room => ({
-        roomCode: room.roomCode,
-        playerCount: room.players.length,
-        createdAt: room.createdAt
-      }))
-      .sort((a, b) => b.createdAt - a.createdAt);
-    
-    socket.emit('publicRooms', publicRooms);
-  });
-
-  socket.on('quickJoin', ({ playerName, playerId }) => {
-    console.log('DEBUG: Backend quickJoin called with playerName:', playerName, 'playerId:', playerId);
-    console.log('DEBUG: Socket ID:', socket.id);
-    
-    // Find a public room with space
-    const availableRooms = Object.values(rooms)
-      .filter(room => !room.isPrivate && room.state === 'teamSelection' && room.players.length < 4);
-    
-    console.log('DEBUG: Available rooms found:', availableRooms.length);
-    
-    if (availableRooms.length > 0) {
-      console.log('DEBUG: Joining existing room');
-      // Join the first available room
-      const room = availableRooms[0];
-      const newPlayer = { id: playerId, name: playerName, team: null };
-      room.players.push(newPlayer);
-      room.playerSockets[playerId] = socket.id;
-
-      // Auto-assign team for quick join (first 2 players to Team A, next 2 to Team B)
-      if (room.players.length <= 2) {
-        newPlayer.team = 'A';
-        room.teams.A.push(playerId);
-      } else {
-        newPlayer.team = 'B';
-        room.teams.B.push(playerId);
-      }
-
-      console.log('DEBUG: Player added to room, team assigned:', newPlayer.team);
-      console.log('DEBUG: Room players count:', room.players.length);
-      socket.join(room.roomCode);
-      console.log('DEBUG: Socket joined room:', room.roomCode);
-      console.log('DEBUG: Emitting roomJoined with roomCode:', room.roomCode);
-      socket.emit('roomJoined', { roomCode: room.roomCode });
-      console.log('DEBUG: roomJoined event emitted');
-      io.to(room.roomCode).emit('playerJoined', newPlayer);
-      console.log('DEBUG: Emitting gameState for room:', room.roomCode);
-      io.to(room.roomCode).emit('gameState', getPublicGameState(room));
-      console.log('DEBUG: gameState event emitted');
-      
-      // Check if room is now full and auto-start game
-      if (room.players.length === 4 && room.teams.A.length === 2 && room.teams.B.length === 2) {
-        room.dealerTeam = Math.random() > 0.5 ? 'A' : 'B';
-        room.state = 'choosingDealer';
-        io.to(room.roomCode).emit('gameState', getPublicGameState(room));
-        io.to(room.roomCode).emit('promptChooseDealer', { dealerTeam: room.dealerTeam });
-      }
-    } else {
-      console.log('DEBUG: No available rooms, creating new room');
-      // No available rooms, create a new public one
-      let roomCode;
-      do {
-        roomCode = generateRoomCode();
-      } while (rooms[roomCode]);
-
-      rooms[roomCode] = {
-        roomCode,
-        players: [],
-        playerSockets: {},
-        state: 'teamSelection',
-        teams: { A: [], B: [] },
-        dealerTeam: null,
-        dealer: null,
-        hukum: null,
-        hukumChooser: null,
-        deck: [],
-        hands: {},
-        currentTurn: null,
-        trick: [],
-        trickStarter: null,
-        round: 0,
-        tricksWon: { A: 0, B: 0 },
-        gameHistory: [],
-        winner: null,
-        isPrivate: false,
-        createdAt: Date.now(),
-      };
-
-      const newPlayer = { id: playerId, name: playerName, team: 'A' };
-      rooms[roomCode].players.push(newPlayer);
-      rooms[roomCode].playerSockets[playerId] = socket.id;
-      rooms[roomCode].teams.A.push(playerId);
-
-      console.log('DEBUG: New room created with roomCode:', roomCode);
-      console.log('DEBUG: Room players count:', rooms[roomCode].players.length);
-      socket.join(roomCode);
-      console.log('DEBUG: Socket joined room:', roomCode);
-      console.log('DEBUG: Emitting roomCreated with roomCode:', roomCode);
-      socket.emit('roomCreated', { roomCode, player: newPlayer });
-      console.log('DEBUG: roomCreated event emitted');
-      io.to(roomCode).emit('gameState', getPublicGameState(rooms[roomCode]));
-      console.log('DEBUG: gameState event emitted');
-    }
-  });
-
+  // Disconnect
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
     for (let roomCode in rooms) {
@@ -522,18 +467,22 @@ io.on('connection', (socket) => {
       if (playerId) {
         const playerIndex = room.players.findIndex(p => p.id === playerId);
         if (playerIndex > -1) {
-          const player = room.players.splice(playerIndex, 1)[0];
-          delete room.playerSockets[playerId];
-          if (player.team && room.teams[player.team]) {
-            const teamIndex = room.teams[player.team].indexOf(playerId);
-            if (teamIndex > -1) room.teams[player.team].splice(teamIndex, 1);
-          }
-          io.to(roomCode).emit('playerLeft', { id: playerId, name: player.name });
-          io.to(roomCode).emit('gameState', getPublicGameState(room));
-          if (room.state === 'teamSelection') {
-            io.to(roomCode).emit('teamsUpdated', room.teams);
-          }
-          break;
+            const player = room.players.splice(playerIndex, 1)[0];
+            delete room.playerSockets[playerId];
+
+            // Remove from team
+            if (player.team && room.teams[player.team]) {
+                const teamIndex = room.teams[player.team].indexOf(playerId);
+                if (teamIndex > -1) room.teams[player.team].splice(teamIndex, 1);
+            }
+
+            io.to(roomCode).emit('playerLeft', { id: playerId, name: player.name });
+            io.to(roomCode).emit('gameState', getPublicGameState(room));
+            // Optionally, update teams if someone leaves pre-game
+            if (room.state === 'teamSelection') {
+                io.to(roomCode).emit('teamsUpdated', room.teams);
+            }
+            break;
         }
       }
     }

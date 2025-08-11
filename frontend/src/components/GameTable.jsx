@@ -1,37 +1,16 @@
-import React, { useEffect, useState } from 'react';
+// frontend/src/components/GameTable.jsx
+import React from 'react';
 
 export default function GameTable({
   gameState,
   playerId,
   playerName,
-  playerHand,
-  chooseTeam,
-  startGame,
-  chooseDealerPlayer,
-  chooseHukum,
-  playCard
+  chooseDealerPlayer, // Prop function from App.jsx
+  chooseHukum,        // Prop function from App.jsx
+  playCard,           // Prop function from App.jsx
+  chooseTeam,         // <-- Add this prop (from App.jsx)
+  startGame           // <-- Add this prop (from App.jsx)
 }) {
-  const [trickVisible, setTrickVisible] = useState(true);
-  const [lastPlayedCard, setLastPlayedCard] = useState(null);
-
-  useEffect(() => {
-    if (gameState?.trick?.length === 0) {
-      setTrickVisible(true);
-      setLastPlayedCard(null);
-    } else if (gameState?.trick?.length > 0) {
-      // Check if a new card was added to the trick
-      const currentTrick = gameState.trick;
-      if (currentTrick.length > 0) {
-        const newCard = currentTrick[currentTrick.length - 1];
-        if (newCard.playerId === playerId) {
-          setLastPlayedCard(newCard);
-          // Reset the last played card after animation completes
-          setTimeout(() => setLastPlayedCard(null), 1000);
-        }
-      }
-    }
-  }, [gameState?.trick, playerId]);
-
   if (!gameState) {
     return (
       <div className="game-table loading">
@@ -41,38 +20,48 @@ export default function GameTable({
     );
   }
 
+  // Use gameState.playerHand which is sent specifically to this player by the backend
+  const playerHand = gameState.playerHand || [];
+  const sortedHand = [...playerHand].sort((a, b) => {
+    const suitOrder = { Clubs: 0, Diamonds: 1, Spades: 2, Hearts: 3 };
+    if (a.suit !== b.suit) return suitOrder[a.suit] - suitOrder[b.suit];
+    const valueOrder = ['7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace'];
+    return valueOrder.indexOf(a.value) - valueOrder.indexOf(b.value);
+  });
+
   const player = gameState.players?.find(p => p.id === playerId);
   const playerTeam = player?.team;
   const isMyTurn = gameState.currentTurn === playerId;
 
-  const getPlayerName = (pId) => gameState.players?.find(p => p.id === pId)?.name || 'Unknown';
+  const handleCardClick = (card) => {
+    if (!isMyTurn || !isPlaying) return;
+    playCard(card); // Use the prop function
+  };
 
   const isValidPlay = (card) => {
-    if (!isMyTurn || gameState.state !== 'playing' || !gameState.trick) return false;
+    if (!isMyTurn || !isPlaying || !gameState.trick) return false;
     if (gameState.trick.length === 0) return true;
+
     const leadSuit = gameState.trick[0].card.suit;
     const hasLead = playerHand.some(c => c.suit === leadSuit);
+    const hasTrump = playerHand.some(c => c.suit === gameState.hukum);
+
     if (hasLead && card.suit !== leadSuit) return false;
+    if (!hasLead && card.suit !== gameState.hukum && hasTrump) return false;
     return true;
   };
 
-  const getCardImage = (card) => {
-    const suit = card.suit.toLowerCase();
-    const value = card.value;
-    return `/cards/${suit}/${value}.webp`;
+  const handleCardClick = (card) => {
+    if (!isMyTurn || !isPlaying) return;
+    playCard(card);
   };
 
-  const getSuitEmoji = (suit) => {
-    switch (suit) {
-      case 'Hearts': return '♥️';
-      case 'Diamonds': return '♦️';
-      case 'Clubs': return '♣️';
-      case 'Spades': return '♠️';
-      default: return '';
-    }
-  };
 
-  if (gameState.state === 'teamSelection') {
+  // --- Team Selection View ---
+  if (isTeamSelection) {
+    const isRoomFull = gameState.players.length >= 4;
+    // Find the player object for the current user to check if they are the creator
+    const currentPlayer = gameState.players.find(p => p.id === playerId);
     const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
     const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
 
@@ -86,66 +75,45 @@ export default function GameTable({
           </div>
         </div>
 
-        <div className="teams-section">
-          <div className="teams-container">
-            <div className="team team-a">
-              <h3>🔴 Team A</h3>
-              <div className="team-players">
-                {gameState.teams?.A?.map(id => {
-                  const p = gameState.players.find(pl => pl.id === id);
-                  return (
-                    <div key={id} className="player-card">
-                      <span className="player-name">{p ? p.name : 'Unknown'}</span>
-                      {id === playerId && <span className="you-badge">(You)</span>}
-                    </div>
-                  );
-                })}
-                {gameState.teams?.A?.length < 2 && (
-                  <button
-                    className="join-team-btn"
-                    onClick={() => chooseTeam('A')}
-                    disabled={playerTeam === 'A'}
-                  >
-                    {playerTeam === 'A' ? '✓ Joined' : 'Join Team A'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="vs-divider">
-              <span>VS</span>
-            </div>
-
-            <div className="team team-b">
-              <h3>🔵 Team B</h3>
-              <div className="team-players">
-                {gameState.teams?.B?.map(id => {
-                  const p = gameState.players.find(pl => pl.id === id);
-                  return (
-                    <div key={id} className="player-card">
-                      <span className="player-name">{p ? p.name : 'Unknown'}</span>
-                      {id === playerId && <span className="you-badge">(You)</span>}
-                    </div>
-                  );
-                })}
-                {gameState.teams?.B?.length < 2 && (
-                  <button
-                    className="join-team-btn"
-                    onClick={() => chooseTeam('B')}
-                    disabled={playerTeam === 'B'}
-                  >
-                    {playerTeam === 'B' ? '✓ Joined' : 'Join Team B'}
-                  </button>
-                )}
-              </div>
-            </div>
+        <div className="teams-layout">
+          <div className="team-pick">
+            <h3>Team A</h3>
+            <ul>
+              {gameState.teams?.A?.map(id => {
+                const p = gameState.players.find(pl => pl.id === id);
+                return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
+              })}
+              {/* Use the `chooseTeam` prop function, not `socket` */}
+              {gameState.teams?.A?.length < 2 && (
+                <button onClick={() => chooseTeam('A')}> {/* Corrected */}
+                  Join Team A
+                </button>
+              )}
+            </ul>
           </div>
+          <div className="team-pick">
+            <h3>Team B</h3>
+            <ul>
+              {gameState.teams?.B?.map(id => {
+                const p = gameState.players.find(pl => pl.id === id);
+                return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
+              })}
+              {/* Use the `chooseTeam` prop function, not `socket` */}
+              {gameState.teams?.B?.length < 2 && (
+                <button onClick={() => chooseTeam('B')}> {/* Corrected */}
+                  Join Team B
+                </button>
+              )}
+            </ul>
+          </div>
+        </div>
 
-          {isCreator && canStart && (
-            <button className="start-game-btn" onClick={startGame}>
-              🚀 Start Game
-            </button>
-          )}
+        {/* Use the `startGame` prop function, not `socket` */}
+        {isCreator && canStart && (
+          <button className="start-button" onClick={startGame}> {/* Corrected */}
+            Start Game
+          </button>
+        )}
 
           {!canStart && (
             <p className="waiting-message">
@@ -170,87 +138,56 @@ export default function GameTable({
     );
   }
 
-  if (gameState.state === 'choosingDealer') {
-    if (gameState.dealerTeam === playerTeam) {
-      return (
-        <div className="game-table dealer-selection">
-          <div className="game-header">
-            <h1>🃏 Hukum Game</h1>
-            <h2>Room Code: {gameState.roomCode}</h2>
-          </div>
-
-          <div className="dealer-prompt">
-            <h3>🎯 Your team ({playerTeam}) deals first!</h3>
-            <p>Choose who will be the dealer:</p>
-            <div className="dealer-options">
-              {gameState.players
-                .filter(p => p.team === playerTeam)
-                .map(p => (
-                  <button
-                    key={p.id}
-                    className="dealer-btn"
-                    onClick={() => chooseDealerPlayer(p.id)}
-                  >
-                    <span className="dealer-name">{p.name}</span>
-                    {p.id === playerId && <span className="you-indicator">(You)</span>}
-                  </button>
-                ))}
-            </div>
-          </div>
+  // --- Choosing Dealer View ---
+  if (isChoosingDealer && gameState.dealerTeam === playerTeam) {
+     return (
+      <div className="game-table prompt">
+        <h1>🃏 Hukum</h1>
+        <h2>Room Code: {gameState.roomCode}</h2>
+        <h3>You are on the Dealer Team ({playerTeam})!</h3>
+        <p>Choose the dealer player:</p>
+        <div className="players-list">
+          {gameState.players
+            .filter(p => p.team === playerTeam)
+            .map(p => (
+              // Use the prop function `socket` is not defined here
+              <button key={p.id} onClick={() => chooseDealerPlayer(p.id)}>
+                {p.name}
+              </button>
+            ))}
         </div>
-      );
-    } else {
-      return (
-        <div className="game-table waiting">
-          <div className="game-header">
-            <h1>🃏 Hukum Game</h1>
-            <h2>Room Code: {gameState.roomCode}</h2>
-          </div>
-          <div className="waiting-message">
-            <h3>⏳ Waiting for Team {gameState.dealerTeam} to choose their dealer...</h3>
-            <div className="spinner"></div>
-          </div>
-        </div>
-      );
-    }
+      </div>
+    );
   }
 
-  if (gameState.state === 'choosingHukum') {
-    if (playerId === gameState.hukumChooser) {
+  // --- Hukum Selection View ---
+  if (isHukumSelection) {
+    const dealerIndex = gameState.players.findIndex(p => p.id === gameState.dealer);
+    const expectedChooserId = gameState.players[(dealerIndex + 1) % 4]?.id;
+    const isChooser = playerId === expectedChooserId;
+
+    if (isChooser) {
       return (
-        <div className="game-table hukum-selection">
-          <div className="game-header">
-            <h1>🃏 Hukum Game</h1>
-            <h2>Room Code: {gameState.roomCode}</h2>
+        <div className="game-table prompt">
+          <h1>🃏 Hukum</h1>
+          <h2>Room Code: {gameState.roomCode}</h2>
+          <h3>Choose the Hukum (Trump) Suit:</h3>
+          <div className="suit-buttons">
+            {['Clubs', 'Diamonds', 'Spades', 'Hearts'].map(suit => (
+              // Use the prop function `socket` is not defined here
+              <button key={suit} onClick={() => chooseHukum(suit)}>
+                {suit}
+              </button>
+            ))}
           </div>
-
-          <div className="hukum-prompt">
-            <h3>🎲 Choose the Trump Suit (Hukum):</h3>
-            <p>Your choice will determine which suit beats all others!</p>
-            <div className="suit-selection">
-              {['Clubs', 'Diamonds', 'Spades', 'Hearts'].map(suit => (
-                <button
-                  key={suit}
-                  className="suit-btn"
-                  onClick={() => chooseHukum(suit)}
-                >
-                  <span className="suit-emoji">{getSuitEmoji(suit)}</span>
-                  <span className="suit-name">{suit}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="your-hand-preview">
-            <h4>Your Hand:</h4>
-            <div className="hand-preview">
-              {playerHand.map((card, index) => (
-                <div key={index} className="card-preview">
-                  <img
-                    src={getCardImage(card)}
-                    alt={`${card.value} of ${card.suit}`}
-                    style={{ width: '50px', height: '70px' }}
-                  />
+          {/* Optionally display the first 4 cards here for the chooser */}
+          <div className="hand">
+            <h4>Your First 4 Cards:</h4>
+            <div className="hand-cards">
+              {sortedHand.map((card, index) => (
+                <div key={`${card.suit}-${card.value}-${index}`} className="card">
+                  <span className="card-value">{card.value}</span>
+                  <span className="card-suit">of {card.suit}</span>
                 </div>
               ))}
             </div>
@@ -258,18 +195,13 @@ export default function GameTable({
         </div>
       );
     } else {
-      return (
-        <div className="game-table waiting">
-          <div className="game-header">
-            <h1>🃏 Hukum Game</h1>
-            <h2>Room Code: {gameState.roomCode}</h2>
-          </div>
-          <div className="waiting-message">
-            <h3>⏳ Waiting for {getPlayerName(gameState.hukumChooser)} to choose Hukum...</h3>
-            <div className="spinner"></div>
-          </div>
-        </div>
-      );
+        return (
+            <div className="game-table">
+                <h1>🃏 Hukum</h1>
+                <h2>Room Code: {gameState.roomCode}</h2>
+                <p>Waiting for {gameState.players.find(p => p.id === expectedChooserId)?.name} to choose Hukum...</p>
+            </div>
+        );
     }
   }
 
@@ -344,39 +276,21 @@ export default function GameTable({
             </div>
           </div>
 
-          <div className="player-hand">
-            <h3>Your Hand ({playerHand.length} cards)</h3>
-            <div className="hand-cards">
-              {playerHand.map((card, index) => {
-                const canPlay = isValidPlay(card);
-                const isHukum = card.suit === gameState.hukum;
-                const isLeadingSuit = gameState.trick?.length > 0 && card.suit === gameState.trick[0].card.suit;
-                
-                return (
-                  <button
-                    key={`${card.suit}-${card.value}-${index}`}
-                    className={`card ${!canPlay ? 'invalid' : ''} ${!isMyTurn ? 'disabled' : ''} ${isHukum ? 'hukum-card' : ''} ${isLeadingSuit ? 'leading-suit' : ''}`}
-                    onClick={() => canPlay && isMyTurn && playCard(card)}
-                    disabled={!isMyTurn || !canPlay}
-                    title={!canPlay ? 'You must follow the leading suit if you have it' : ''}
-                  >
-                    <div className="card-content">
-                      <img
-                        src={getCardImage(card)}
-                        alt={`${card.value} of ${card.suit}`}
-                      />
-                      {isHukum && <div className="hukum-indicator">H</div>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {gameState.trick?.length === 0 && isMyTurn && (
-              <div className="play-hint">
-                <p>💡 You're leading this trick - play any card!</p>
-              </div>
-            )}
+        {/* Player's Hand */}
+        <div className="hand">
+          <h3>Your Hand</h3>
+          <div className="hand-cards">
+            {playerHand.map((card, index) => (
+              <button
+                key={`${card.suit}-${card.value}-${index}`} // Better key
+                className={`card ${(!isMyTurn || !isValidPlay(card)) ? 'invalid' : ''}`}
+                onClick={() => handleCardClick(card)}
+                disabled={!isMyTurn || !isValidPlay(card)}
+              >
+                <span className="card-value">{card.value}</span>
+                <span className="card-suit">of {card.suit}</span>
+              </button>
+            ))}
           </div>
         </div>
       </div>
