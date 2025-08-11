@@ -5,11 +5,11 @@ export default function GameTable({
   gameState,
   playerId,
   playerName,
-  chooseDealerPlayer, // Prop function from App.jsx
-  chooseHukum,        // Prop function from App.jsx
-  playCard,           // Prop function from App.jsx
-  chooseTeam,         // <-- Add this prop (from App.jsx)
-  startGame           // <-- Add this prop (from App.jsx)
+  chooseDealerPlayer,
+  chooseHukum,
+  playCard,
+  chooseTeam,
+  startGame
 }) {
   if (!gameState) {
     return (
@@ -20,7 +20,6 @@ export default function GameTable({
     );
   }
 
-  // Use gameState.playerHand which is sent specifically to this player by the backend
   const playerHand = gameState.playerHand || [];
   const sortedHand = [...playerHand].sort((a, b) => {
     const suitOrder = { Clubs: 0, Diamonds: 1, Spades: 2, Hearts: 3 };
@@ -33,9 +32,15 @@ export default function GameTable({
   const playerTeam = player?.team;
   const isMyTurn = gameState.currentTurn === playerId;
 
+  // Define view flags
+  const isTeamSelection = gameState.state === 'teamSelection';
+  const isChoosingDealer = gameState.state === 'chooseDealer';
+  const isHukumSelection = gameState.state === 'chooseHukum';
+  const isPlaying = gameState.state === 'playing';
+
   const handleCardClick = (card) => {
     if (!isMyTurn || !isPlaying) return;
-    playCard(card); // Use the prop function
+    playCard(card);
   };
 
   const isValidPlay = (card) => {
@@ -51,95 +56,92 @@ export default function GameTable({
     return true;
   };
 
-  const handleCardClick = (card) => {
-    if (!isMyTurn || !isPlaying) return;
-    playCard(card);
+  const getSuitEmoji = (suit) => {
+    const emojis = {
+      Clubs: '♣️',
+      Diamonds: '♦️',
+      Spades: '♠️',
+      Hearts: '♥️'
+    };
+    return emojis[suit] || suit;
   };
 
+  const getPlayerName = (id) => {
+    return gameState.players.find(p => p.id === id)?.name || 'Unknown';
+  };
 
-// --- Team Selection View ---
-if (isTeamSelection) {
-  const isRoomFull = gameState.players.length >= 4;
-  const currentPlayer = gameState.players.find(p => p.id === playerId);
-  const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
-  const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
+  // --- Team Selection View ---
+  if (isTeamSelection) {
+    const isRoomFull = gameState.players.length >= 4;
+    const currentPlayer = gameState.players.find(p => p.id === playerId);
+    const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
+    const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
 
-  return (
-    <div className="game-table">
-      <div className="game-header">
-        <h1>🃏 Hukum Game Lobby</h1>
-        <div className="room-info">
-          <h2>Room Code: <span className="room-code">{gameState.roomCode}</span></h2>
-          <p>Share this code with friends to join!</p>
+    return (
+      <div className="game-table">
+        <div className="game-header">
+          <h1>🃏 Hukum Game Lobby</h1>
+          <div className="room-info">
+            <h2>Room Code: <span className="room-code">{gameState.roomCode}</span></h2>
+            <p>Share this code with friends to join!</p>
+          </div>
+        </div>
+
+        <div className="teams-layout">
+          <div className="team-pick">
+            <h3>Team A</h3>
+            <ul>
+              {gameState.teams?.A?.map(id => {
+                const p = gameState.players.find(pl => pl.id === id);
+                return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
+              })}
+            </ul>
+            {gameState.teams?.A?.length < 2 && !currentPlayer?.team && (
+              <button onClick={() => chooseTeam('A')}>Join Team A</button>
+            )}
+          </div>
+
+          <div className="team-pick">
+            <h3>Team B</h3>
+            <ul>
+              {gameState.teams?.B?.map(id => {
+                const p = gameState.players.find(pl => pl.id === id);
+                return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
+              })}
+            </ul>
+            {gameState.teams?.B?.length < 2 && !currentPlayer?.team && (
+              <button onClick={() => chooseTeam('B')}>Join Team B</button>
+            )}
+          </div>
+        </div>
+
+        {isCreator && canStart && (
+          <button className="start-button" onClick={startGame}>Start Game</button>
+        )}
+
+        {!canStart && (
+          <p className="waiting-message">Waiting for all players to join teams...</p>
+        )}
+
+        <div className="players-summary">
+          <h3>Players in Room ({gameState.players.length}/4):</h3>
+          <div className="players-list">
+            {gameState.players.map(p => (
+              <div key={p.id} className="player-summary">
+                <span className="player-name">{p.name}</span>
+                {p.id === playerId && <span className="you-badge">(You)</span>}
+                {p.team && <span className="team-badge">Team {p.team}</span>}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
-
-      <div className="teams-layout">
-        <div className="team-pick">
-          <h3>Team A</h3>
-          <ul>
-            {gameState.teams?.A?.map(id => {
-              const p = gameState.players.find(pl => pl.id === id);
-              return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
-            })}
-          </ul>
-          {/* Use the `chooseTeam` prop function, not `socket` */}
-          {gameState.teams?.A?.length < 2 && !currentPlayer?.team && (
-            <button onClick={() => chooseTeam('A')}>
-              Join Team A
-            </button>
-          )}
-        </div>
-
-        <div className="team-pick">
-          <h3>Team B</h3>
-          <ul>
-            {gameState.teams?.B?.map(id => {
-              const p = gameState.players.find(pl => pl.id === id);
-              return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
-            })}
-          </ul>
-          {/* Use the `chooseTeam` prop function, not `socket` */}
-          {gameState.teams?.B?.length < 2 && !currentPlayer?.team && (
-            <button onClick={() => chooseTeam('B')}>
-              Join Team B
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Use the `startGame` prop function, not `socket` */}
-      {isCreator && canStart && (
-        <button className="start-button" onClick={startGame}>
-          Start Game
-        </button>
-      )}
-
-      {!canStart && (
-        <p className="waiting-message">
-          Waiting for all players to join teams...
-        </p>
-      )}
-
-      <div className="players-summary">
-        <h3>Players in Room ({gameState.players.length}/4):</h3>
-        <div className="players-list">
-          {gameState.players.map(p => (
-            <div key={p.id} className="player-summary">
-              <span className="player-name">{p.name}</span>
-              {p.id === playerId && <span className="you-badge">(You)</span>}
-              {p.team && <span className="team-badge">Team {p.team}</span>}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+    );
+  }
 
   // --- Choosing Dealer View ---
   if (isChoosingDealer && gameState.dealerTeam === playerTeam) {
-     return (
+    return (
       <div className="game-table prompt">
         <h1>🃏 Hukum</h1>
         <h2>Room Code: {gameState.roomCode}</h2>
@@ -149,7 +151,6 @@ if (isTeamSelection) {
           {gameState.players
             .filter(p => p.team === playerTeam)
             .map(p => (
-              // Use the prop function `socket` is not defined here
               <button key={p.id} onClick={() => chooseDealerPlayer(p.id)}>
                 {p.name}
               </button>
@@ -173,13 +174,11 @@ if (isTeamSelection) {
           <h3>Choose the Hukum (Trump) Suit:</h3>
           <div className="suit-buttons">
             {['Clubs', 'Diamonds', 'Spades', 'Hearts'].map(suit => (
-              // Use the prop function `socket` is not defined here
               <button key={suit} onClick={() => chooseHukum(suit)}>
                 {suit}
               </button>
             ))}
           </div>
-          {/* Optionally display the first 4 cards here for the chooser */}
           <div className="hand">
             <h4>Your First 4 Cards:</h4>
             <div className="hand-cards">
@@ -194,17 +193,22 @@ if (isTeamSelection) {
         </div>
       );
     } else {
-        return (
-            <div className="game-table">
-                <h1>🃏 Hukum</h1>
-                <h2>Room Code: {gameState.roomCode}</h2>
-                <p>Waiting for {gameState.players.find(p => p.id === expectedChooserId)?.name} to choose Hukum...</p>
-            </div>
-        );
+      return (
+        <div className="game-table">
+          <h1>🃏 Hukum</h1>
+         
+          <h2>Room Code: {gameState.roomCode}</h2>
+          <p>Waiting for {getPlayerName(expectedChooserId)} to choose Hukum...</p>
+        </div>
+      );
     }
   }
 
-  if (gameState.state === 'playing') {
+  // --- Playing View ---
+  if (isPlaying) {
+    const lastPlayedCard = gameState.trick?.[gameState.trick.length - 1] || null;
+    const trickVisible = true; // Adjust if needed
+
     return (
       <div className="game-table playing">
         <div className="game-header">
@@ -248,7 +252,7 @@ if (isTeamSelection) {
 
         <div className="game-table-surface">
           <div className="table-decoration"></div>
-          
+
           <div className={`trick-area ${trickVisible ? '' : 'fade-out'}`}>
             <h3>Current Trick</h3>
             <div className="trick-cards">
@@ -256,7 +260,13 @@ if (isTeamSelection) {
                 gameState.trick.map((t, index) => (
                   <div
                     key={index}
-                    className={`played-card ${lastPlayedCard && t.card.value === lastPlayedCard.card.value && t.card.suit === lastPlayedCard.card.suit ? 'last-played' : ''}`}
+                    className={`played-card ${
+                      lastPlayedCard &&
+                      t.card.value === lastPlayedCard.card.value &&
+                      t.card.suit === lastPlayedCard.card.suit
+                        ? 'last-played'
+                        : ''
+                    }`}
                   >
                     <div className="card-display">
                       <img
@@ -275,27 +285,31 @@ if (isTeamSelection) {
             </div>
           </div>
 
-        {/* Player's Hand */}
-        <div className="hand">
-          <h3>Your Hand</h3>
-          <div className="hand-cards">
-            {playerHand.map((card, index) => (
-              <button
-                key={`${card.suit}-${card.value}-${index}`} // Better key
-                className={`card ${(!isMyTurn || !isValidPlay(card)) ? 'invalid' : ''}`}
-                onClick={() => handleCardClick(card)}
-                disabled={!isMyTurn || !isValidPlay(card)}
-              >
-                <span className="card-value">{card.value}</span>
-                <span className="card-suit">of {card.suit}</span>
-              </button>
-            ))}
+          {/* Player's Hand */}
+          <div className="hand">
+            <h3>Your Hand</h3>
+            <div className="hand-cards">
+              {playerHand.map((card, index) => (
+                <button
+                  key={`${card.suit}-${card.value}-${index}`}
+                  className={`card ${
+                    (!isMyTurn || !isValidPlay(card)) ? 'invalid' : ''
+                  }`}
+                  onClick={() => handleCardClick(card)}
+                  disabled={!isMyTurn || !isValidPlay(card)}
+                >
+                  <span className="card-value">{card.value}</span>
+                  <span className="card-suit">of {card.suit}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  // --- Game Over View ---
   if (gameState.state === 'gameOver') {
     const isWinner = gameState.winner?.includes(playerTeam);
 
@@ -327,10 +341,7 @@ if (isTeamSelection) {
             </div>
           </div>
 
-          <button
-            className="play-again-btn"
-            onClick={() => window.location.reload()}
-          >
+          <button className="play-again-btn" onClick={() => window.location.reload()}>
             🔄 Play Again
           </button>
         </div>
@@ -338,6 +349,7 @@ if (isTeamSelection) {
     );
   }
 
+  // --- Fallback View ---
   return (
     <div className="game-table loading">
       <h1>🃏 Hukum Game</h1>
