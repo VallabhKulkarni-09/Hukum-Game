@@ -57,86 +57,85 @@ export default function GameTable({
   };
 
 
-  // --- Team Selection View ---
-  if (isTeamSelection) {
-    const isRoomFull = gameState.players.length >= 4;
-    // Find the player object for the current user to check if they are the creator
-    const currentPlayer = gameState.players.find(p => p.id === playerId);
-    const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
-    const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
+// --- Team Selection View ---
+if (isTeamSelection) {
+  const isRoomFull = gameState.players.length >= 4;
+  const currentPlayer = gameState.players.find(p => p.id === playerId);
+  const isCreator = gameState.players.length > 0 && gameState.players[0].id === playerId;
+  const canStart = gameState.teams?.A?.length === 2 && gameState.teams?.B?.length === 2;
 
-    return (
-      <div className="game-table">
-        <div className="game-header">
-          <h1>🃏 Hukum Game Lobby</h1>
-          <div className="room-info">
-            <h2>Room Code: <span className="room-code">{gameState.roomCode}</span></h2>
-            <p>Share this code with friends to join!</p>
-          </div>
+  return (
+    <div className="game-table">
+      <div className="game-header">
+        <h1>🃏 Hukum Game Lobby</h1>
+        <div className="room-info">
+          <h2>Room Code: <span className="room-code">{gameState.roomCode}</span></h2>
+          <p>Share this code with friends to join!</p>
         </div>
+      </div>
 
-        <div className="teams-layout">
-          <div className="team-pick">
-            <h3>Team A</h3>
-            <ul>
-              {gameState.teams?.A?.map(id => {
-                const p = gameState.players.find(pl => pl.id === id);
-                return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
-              })}
-              {/* Use the `chooseTeam` prop function, not `socket` */}
-              {gameState.teams?.A?.length < 2 && (
-                <button onClick={() => chooseTeam('A')}> {/* Corrected */}
-                  Join Team A
-                </button>
-              )}
-            </ul>
-          </div>
-          <div className="team-pick">
-            <h3>Team B</h3>
-            <ul>
-              {gameState.teams?.B?.map(id => {
-                const p = gameState.players.find(pl => pl.id === id);
-                return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
-              })}
-              {/* Use the `chooseTeam` prop function, not `socket` */}
-              {gameState.teams?.B?.length < 2 && (
-                <button onClick={() => chooseTeam('B')}> {/* Corrected */}
-                  Join Team B
-                </button>
-              )}
-            </ul>
-          </div>
-        </div>
-
-        {/* Use the `startGame` prop function, not `socket` */}
-        {isCreator && canStart && (
-          <button className="start-button" onClick={startGame}> {/* Corrected */}
-            Start Game
-          </button>
-        )}
-
-          {!canStart && (
-            <p className="waiting-message">
-              Waiting for all players to join teams...
-            </p>
+      <div className="teams-layout">
+        <div className="team-pick">
+          <h3>Team A</h3>
+          <ul>
+            {gameState.teams?.A?.map(id => {
+              const p = gameState.players.find(pl => pl.id === id);
+              return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
+            })}
+          </ul>
+          {/* Use the `chooseTeam` prop function, not `socket` */}
+          {gameState.teams?.A?.length < 2 && !currentPlayer?.team && (
+            <button onClick={() => chooseTeam('A')}>
+              Join Team A
+            </button>
           )}
         </div>
 
-        <div className="players-summary">
-          <h3>Players in Room ({gameState.players.length}/4):</h3>
-          <div className="players-list">
-            {gameState.players.map(p => (
-              <div key={p.id} className="player-summary">
-                <span className="player-name">{p.name}</span>
-                {p.id === playerId && <span className="you-badge">(You)</span>}
-                {p.team && <span className="team-badge">Team {p.team}</span>}
-              </div>
-            ))}
-          </div>
+        <div className="team-pick">
+          <h3>Team B</h3>
+          <ul>
+            {gameState.teams?.B?.map(id => {
+              const p = gameState.players.find(pl => pl.id === id);
+              return <li key={id} className="player">{p ? p.name : 'Unknown'}</li>;
+            })}
+          </ul>
+          {/* Use the `chooseTeam` prop function, not `socket` */}
+          {gameState.teams?.B?.length < 2 && !currentPlayer?.team && (
+            <button onClick={() => chooseTeam('B')}>
+              Join Team B
+            </button>
+          )}
         </div>
       </div>
-    );
-  }
+
+      {/* Use the `startGame` prop function, not `socket` */}
+      {isCreator && canStart && (
+        <button className="start-button" onClick={startGame}>
+          Start Game
+        </button>
+      )}
+
+      {!canStart && (
+        <p className="waiting-message">
+          Waiting for all players to join teams...
+        </p>
+      )}
+
+      <div className="players-summary">
+        <h3>Players in Room ({gameState.players.length}/4):</h3>
+        <div className="players-list">
+          {gameState.players.map(p => (
+            <div key={p.id} className="player-summary">
+              <span className="player-name">{p.name}</span>
+              {p.id === playerId && <span className="you-badge">(You)</span>}
+              {p.team && <span className="team-badge">Team {p.team}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
   // --- Choosing Dealer View ---
   if (isChoosingDealer && gameState.dealerTeam === playerTeam) {
