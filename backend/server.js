@@ -409,8 +409,8 @@ io.on('connection', (socket) => {
       room.trickStarter = winnerId;
       room.round += 1;
 
-      const targetA = room.dealerTeam === 'A' ? 5 : 4;
-      const targetB = room.dealerTeam === 'B' ? 5 : 4;
+      const targetA = room.dealerTeam === 'A' ? 4 : 5;
+      const targetB = room.dealerTeam === 'B' ? 4 : 5;
       if (room.scores.A >= targetA || room.scores.B >= targetB || room.round >= 8) {
         room.state = 'gameOver';
         if (room.scores.A >= targetA) {
